@@ -1,0 +1,135 @@
+<div align="center">
+
+# aca — Aliyun Cloud Assistant CLI
+
+[![npm](https://img.shields.io/npm/v/aca-cli?logo=npm)](https://www.npmjs.com/package/aca-cli)
+[![node](https://img.shields.io/node/v/aca-cli?logo=nodedotjs)](https://nodejs.org/)
+[![license](https://img.shields.io/npm/l/aca-cli)](LICENSE)
+
+</div>
+
+通过[阿里云云助手](https://help.aliyun.com/zh/ecs/user-guide/overview-10)在 Windows ECS 上执行 PowerShell、发布和回退 IIS 站点。
+
+- **服务器上不用装东西、不用开端口**，只需 AccessKey。
+- **输出纯文本**，失败以非 0 退出码表示。
+- **附带 Agent Skill**：对 Claude Code、Codex 等 Agent 说"把 MyApp 发到测试站"，它会先 `--check` 给你看结果，等你确认了再发。
+
+## 安装
+
+需要 Node 22.12+。
+
+```sh
+npm install -g aca-cli            # aca 命令
+npx skills add YoungsunLi/aca -g  # 给 Agent 装 skill
+```
+
+`npx skills add` 会问装给哪些 Agent，不加 `-g` 则装进当前项目。
+
+skill 按 Agent Skills 开放标准编写，也可以手动复制仓库里的 `.claude/skills/aca/`：Claude Code 放到 `~/.claude/skills/`，Codex 放到 `~/.agents/skills/`，只给某个项目用就放进项目里的同名目录。
+
+## 配置
+
+在 `~/.aca/config.json` 写一份配置，或设置环境变量 `ACA_CONFIG` 指向别的路径。
+
+```json
+{
+  "region": "cn-hangzhou",
+  "oss": { "bucket": "my-deploy-bucket", "prefix": "deploy/" },
+  "instances": { "web1": "i-bp1xxxxxxxx", "web2": "i-bp1yyyyyyyy" },
+  "sites": {
+    "Default Web Site": {
+      "instances": ["web1", "web2"],
+      "project": "MyApp.Web",
+      "publish": "D:\\Publish\\MyApp",
+      "note": "正式站"
+    }
+  }
+}
+```
+
+`sites` 的 key 是 IIS 站点名，`deploy` 只认这里登记的站点。除 `instances` 外的字段都可选：
+
+| 字段 | 说明 |
+| --- | --- |
+| `instances` | 跑这个站点的服务器（别名或实例 ID），顺序即发布顺序 |
+| `publish` | 本机的发布目录，`deploy` 省略路径时用它 |
+| `project`<br>`note` | 只在 `aca sites` 里显示，方便认出是哪个站点 |
+
+### 凭证和权限
+
+凭证按阿里云 SDK 的[默认凭证链](https://help.aliyun.com/zh/sdk/developer-reference/v2-manage-node-js-access-credentials)查找，和阿里云 CLI 共用：`aliyun configure` 配过就不用再配，也可以设环境变量 `ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET`，两处都配了时环境变量优先。
+
+**RAM 权限**：`ecs:DescribeInstances`、`ecs:RunCommand`、`ecs:DescribeInvocationResults`、`oss:PutObject`、`oss:GetObject`。
+
+> [!WARNING]
+> 云助手以 SYSTEM 身份执行脚本，`ecs:RunCommand` 授权到哪些实例，持有这份 AccessKey 的人和 Agent 就是哪些实例的管理员，按实例 ID 授权，不要给 `*`。
+
+## 约束
+
+- **ECS 与 OSS bucket 同地域**，发布包走 OSS 内网下载。
+- **服务器需装有[云助手客户端](https://help.aliyun.com/zh/ecs/user-guide/install-the-cloud-assistant-agent#775c8cd747xcj)**（2017 年 12 月以来用公共镜像创建的服务器已预装）。
+- **云助手按服务器的系统代码页回传输出**，英文版等非中文 Windows 上站点名、路径和 `-m` 说明里的中文会变成问号，站点目录路径含中文时 `rollback` 会因此失败。
+- **站点目录必须是本地盘上的普通目录**，不能是盘符根或 UNC 路径，也不要嵌套在另一个站点目录里：备份和发布记录放在它旁边。
+- **站点目录旁的 `<root>.bak-<时间>` 备份和 `<root>.aca-*` 文件是 aca 的状态，别手动删**：删了最新的备份，`rollback` 会跳过那次发布，恢复出一个从没发布过的混合版本。
+- **发布完成后站点和应用池会被启动**，即使发布前是手动停掉的。
+
+## 命令
+
+```sh
+aca instances                                   # 列出实例
+aca sites                                       # 列出站点与项目、发布目录、实例的映射
+aca run web1 "Get-Website | select name,state"  # 以 SYSTEM 执行任意 PowerShell
+aca deploy "Default Web Site" ./publish --check # 只预检查，打印将覆盖/新增的文件，不停站
+aca deploy "Default Web Site" ./publish -m "release-2026-09"  # 目录或 zip；-m 写进发布记录
+aca status "Default Web Site"                   # 每台服务器上最新的文件时间和最近 5 条发布/回退记录
+aca rollback "Default Web Site" --check         # 看每台服务器会撤掉哪次发布
+aca rollback "Default Web Site"                 # 回退最近一次发布
+```
+
+### `aca run`
+
+aca 以 SYSTEM 身份在服务器上执行任意 PowerShell，结束后打印输出；脚本以非 0 退出（包括没被捕获的异常）时 aca 用同样的退出码退出。
+
+- **适合查日志、看磁盘、重启应用池这类临时运维**，实例可以写配置里的别名，也可以写当前地域的任意实例 ID。
+- **`-t` 指定超时秒数**，到点强杀（默认 300）。
+- **PowerShell 默认出错的命令只报错不中止**，退出码仍是 0；要让任何错误都算失败，脚本开头加 `$ErrorActionPreference = 'Stop'`。
+- **脚本连同 aca 加的前缀 base64 后不能超过 24 KB**（纯英文约 18 KB）；输出超过云助手上限会被截断，aca 会提示丢了多少字节，大的输出先在脚本里筛过。
+- **改站点文件请用 `aca deploy`**：用 `aca run` 改的东西没有备份，`aca rollback` 管不了。
+
+### `aca deploy`
+
+aca 在每台服务器上依次执行：下载解压 → 预检查 → 停站 → 把将被覆盖的文件备份到 `<root>.bak-<时间>` → 覆盖复制 → 启站。
+
+- **发布是增量的**：包里有什么就覆盖什么，可以只发几个改动的文件；站点里已有的上传文件、日志、`web.config` 不动，包里已删掉的文件也不会被清理。
+- **预检查不过**（源码痕迹、根目录 `web.config`、疑似发错站点、磁盘不足）aca 就不停站直接退出。
+- **站点有多台服务器时，aca 发完一台再发下一台**，一台失败就停止，已发布的服务器不会自动回退。
+
+#### 发布失败后
+
+不论是撤销这次发布还是修好重发，都先跑 `aca rollback <站点> --check`：
+
+- 显示要撤的是这次发布（发布 ID 是开始时的 UTC 时间）就先回退；
+- 显示的是更早的发布，说明哪台服务器都没发上，不用回退。
+
+> [!WARNING]
+> 发上了这次的服务器不先回退就重发，会把这次的版本当作备份，之后回退一次只能退到这次，退不回发布前的版本。
+
+### `aca rollback`
+
+aca 恢复最近一次备份、删除那次新增的文件、重启站点，然后删掉这个备份；再回退一次就退到更早一次发布。
+
+## 轮询失败或超时
+
+- **aca 报 `Polling Cloud Assistant results failed` 或 `Timed out waiting for Cloud Assistant results` 时**，服务器上的脚本可能还在跑，先跑 `aca status` 看发布记录再决定是否回退。
+- **某台服务器上的脚本跑满 30 分钟被云助手强杀时**，脚本来不及写发布记录，站点和应用池可能停着，文件可能只覆盖了一半。先跑 `aca rollback <站点> --check`：这台服务器要撤的是这次发布就回退，否则文件没动过，手动启站：
+
+  ```sh
+  aca run <实例> "Start-WebAppPool (Get-Website '<站点>').applicationPool; Start-Website '<站点>'"
+  ```
+
+## 免责声明
+
+> [!CAUTION]
+> aca 会停止并覆盖生产站点。请先在测试站跑通、每次发布前用 `--check`、保管好 AccessKey。
+
+本软件按 MIT 协议"按原样"提供，不附带任何担保，详见 [LICENSE](LICENSE)。

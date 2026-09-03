@@ -1,0 +1,59 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
+import $Credential from '@alicloud/credentials';
+
+export type Site = {
+  /** 部署了该站点的实例（别名或 ID），顺序即发布顺序 */
+  instances: string[];
+  /** 源码里的项目名，站点名和它往往对不上 */
+  project?: string;
+  /** 本地发布输出目录，deploy 不给路径时用它 */
+  publish?: string;
+  note?: string;
+};
+export type Config = {
+  region: string;
+  oss: { bucket: string; prefix?: string };
+  /** 实例别名 → 实例 ID，让 sites 里能写 web1 这种可读名字 */
+  instances: Record<string, string>;
+  /** key 是 IIS 站点名 */
+  sites: Record<string, Site>;
+  credential: InstanceType<typeof $Credential.default>;
+};
+
+// 配置的校验都在这里做一次，后面的代码直接信任它
+export function loadConfig(): Config {
+  // 不找当前目录：Agent 在别人的仓库里运行时，会悄悄用上那边的配置
+  const file = resolve(process.env.ACA_CONFIG || join(homedir(), '.aca', 'config.json'));
+  if (!existsSync(file)) throw new Error(`Config file not found: ${file}`);
+
+  const { region, oss, instances = {}, sites = {} } = JSON.parse(readFileSync(file, 'utf8'));
+  if (!region || !oss?.bucket) throw new Error(`${file}: region and oss.bucket are required`);
+  // 兼容控制台里 oss://bucket/ 的写法
+  oss.bucket = oss.bucket.replace(/^oss:\/\/|\/$/g, '');
+  for (const [name, site] of Object.entries<Site>(sites)) {
+    if (!site.instances?.length) throw new Error(`${file}: site "${name}" has no instances`);
+    const bad = site.instances.find((i) => !Object.hasOwn(instances, i) && !i.startsWith('i-'));
+    if (bad) throw new Error(`${file}: "${bad}" in site "${name}" is neither an alias from instances nor an instance ID`);
+  }
+  return { region, oss, instances, sites, credential: newCredential() };
+}
+
+// SDK 的默认凭证链除了环境变量还读 aliyun configure 写的 ~/.aliyun/config.json，和阿里云 CLI 共用一份凭证。
+// 它的报错会原样带上那个文件或服务端响应的内容，打印前把密钥遮掉
+function newCredential() {
+  const chain = $Credential.DefaultCredentialsProvider.builder().build();
+  return new $Credential.default(null, {
+    getProviderName: () => chain.getProviderName(),
+    getCredentials: () => chain.getCredentials().catch((e: Error) => {
+      throw new Error(e.message.replace(/((?:secret|token)\w*"?\s*[:=]\s*"?)[^"\s,}]+/gi, '$1***'));
+    }),
+  });
+}
+
+export function getSite(cfg: Config, name: string): Site {
+  const site = cfg.sites[name];
+  if (!site) throw new Error(`No site "${name}" in the config; configured sites: ${Object.keys(cfg.sites).join(', ') || '(none)'}`);
+  return site;
+}

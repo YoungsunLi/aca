@@ -1,0 +1,48 @@
+{
+  "name": "aca-cli",
+  "version": "0.1.0",
+  "description": "通过阿里云云助手管理 Windows ECS、发布 IIS 站点的 CLI，附带 Agent Skill",
+  "keywords": [
+    "agent-skills",
+    "alibaba-cloud",
+    "aliyun",
+    "cli",
+    "cloud-assistant",
+    "deployment",
+    "ecs",
+    "iis",
+    "powershell",
+    "windows-server"
+  ],
+  "author": "YoungsunLi",
+  "license": "MIT",
+  "repository": "github:YoungsunLi/aca",
+  "type": "module",
+  "bin": {
+    "aca": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "ps"
+  ],
+  "scripts": {
+    "prepare": "tsc"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "dependencies": {
+    "@alicloud/credentials": "^2.4.7",
+    "@alicloud/ecs20140526": "^7.11.1",
+    "@alicloud/openapi-client": "^0.4.15",
+    "ali-oss": "^6.23.0",
+    "archiver": "^8.0.0",
+    "commander": "^15.0.0"
+  },
+  "devDependencies": {
+    "@types/ali-oss": "^6.23.3",
+    "@types/archiver": "^8.0.0",
+    "@types/node": "^26.4.1",
+    "typescript": "^7.0.2"
+  }
+}

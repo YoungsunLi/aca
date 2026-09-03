@@ -1,0 +1,82 @@
+import { setTimeout as sleep } from 'node:timers/promises';
+import $Ecs from '@alicloud/ecs20140526';
+import $OpenApi from '@alicloud/openapi-client';
+import type { Config } from './config.ts';
+
+export type Instance = { id: string; name: string; status: string; os: string; publicIp: string; privateIp: string };
+/** dropped：输出超过云助手上限被丢掉的字节数 */
+export type RunResult = { status: string; exitCode: number | undefined; output: string; error: string; dropped: number };
+
+// Terminated 是在控制台点了"停止执行"
+const TERMINAL_STATUS = new Set(['Success', 'Failed', 'Error', 'Timeout', 'Cancelled', 'Stopped', 'Terminated', 'Invalid', 'Aborted']);
+// 云助手 Windows Agent（实测 2.1.4）按系统 ANSI 代码页解码输出，改成 UTF-8 反而乱码。
+// PS 3.0（Server 2012）脚本抛错后退出码仍为 0，trap 保证失败时非 0，aca run 的脚本也要靠它
+const PS_PREAMBLE = `[Console]::OutputEncoding = [Text.Encoding]::Default
+trap { 'ERROR: ' + $_.Exception.Message; exit 1 }
+`;
+
+export class Ecs {
+  #client: InstanceType<typeof $Ecs.default>;
+  #region: string;
+  #aliases: Record<string, string>;
+
+  constructor({ region, credential, instances }: Config) {
+    this.#region = region;
+    this.#aliases = instances;
+    this.#client = new $Ecs.default(new $OpenApi.Config({ credential, endpoint: `ecs.${region}.aliyuncs.com` }));
+  }
+
+  async listInstances(): Promise<Instance[]> {
+    const result: Instance[] = [];
+    let nextToken: string | undefined;
+    do {
+      const { body } = await this.#client.describeInstances(new $Ecs.DescribeInstancesRequest({ regionId: this.#region, maxResults: 100, nextToken }));
+      for (const i of body?.instances?.instance ?? []) {
+        result.push({
+          id: i.instanceId ?? '',
+          name: i.instanceName ?? '',
+          status: i.status ?? '',
+          os: i.OSName ?? '',
+          publicIp: i.eipAddress?.ipAddress || i.publicIpAddress?.ipAddress?.[0] || '',
+          privateIp: i.vpcAttributes?.privateIpAddress?.ipAddress?.[0] ?? '',
+        });
+      }
+      nextToken = body?.nextToken || undefined;
+    } while (nextToken);
+    return result;
+  }
+
+  /** instance 可以是实例 ID，也可以是配置里的别名 */
+  async runPowerShell(instance: string, script: string, timeoutSec: number): Promise<RunResult> {
+    const { body } = await this.#client.runCommand(new $Ecs.RunCommandRequest({
+      regionId: this.#region,
+      type: 'RunPowerShellScript',
+      contentEncoding: 'Base64',
+      commandContent: Buffer.from(PS_PREAMBLE + script).toString('base64'),
+      instanceId: [this.#aliases[instance] ?? instance],
+      timeout: timeoutSec,
+    }));
+    // 云助手到时会强杀脚本并置 Timeout，本地再多等一分钟兜底，避免状态没更新时死等
+    const deadline = Date.now() + (timeoutSec + 60) * 1000;
+    let failures = 0;
+    while (Date.now() < deadline) {
+      await sleep(2000);
+      let r;
+      try {
+        const res = await this.#client.describeInvocationResults(new $Ecs.DescribeInvocationResultsRequest({
+          regionId: this.#region, invokeId: body?.invokeId, contentEncoding: 'PlainText',
+        }));
+        r = res.body?.invocation?.invocationResults?.invocationResult?.[0];
+        failures = 0;
+      } catch (e) {
+        // 轮询时的网络抖动不该让一次正在进行的发布"看起来失败"，连续 5 次才放弃
+        if (++failures >= 5) throw new Error(`Polling Cloud Assistant results failed 5 times in a row, invokeId=${body?.invokeId}; the script may still be running on the server: ${(e as Error).message}`);
+        continue;
+      }
+      if (r?.invocationStatus && TERMINAL_STATUS.has(r.invocationStatus)) {
+        return { status: r.invocationStatus, exitCode: r.exitCode, output: r.output ?? '', error: r.errorInfo ?? '', dropped: r.dropped ?? 0 };
+      }
+    }
+    throw new Error(`Timed out waiting for Cloud Assistant results, invokeId=${body?.invokeId}; the script may still be running on the server, see Cloud Assistant in the ECS console`);
+  }
+}
