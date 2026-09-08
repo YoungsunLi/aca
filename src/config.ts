@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, resolve, win32 } from 'node:path';
 import $Credential from '@alicloud/credentials';
 
 export type Site = {
@@ -10,6 +10,8 @@ export type Site = {
   project?: string;
   /** 本地发布输出目录，deploy 不给路径时用它 */
   publish?: string;
+  /** 包里不发布的相对路径（目录或文件），如 bin/Res：服务器上自己维护的密钥、环境配置列在这里，发布就不会覆盖 */
+  exclude?: string[];
   note?: string;
 };
 export type Config = {
@@ -36,6 +38,15 @@ export function loadConfig(): Config {
     if (!site.instances?.length) throw new Error(`${file}: site "${name}" has no instances`);
     const bad = site.instances.find((i) => !Object.hasOwn(instances, i) && !i.startsWith('i-'));
     if (bad) throw new Error(`${file}: "${bad}" in site "${name}" is neither an alias from instances nor an instance ID`);
+    if (site.exclude !== undefined) {
+      if (!Array.isArray(site.exclude) || !site.exclude.every((p) => typeof p === 'string')) throw new Error(`${file}: exclude of site "${name}" must be an array of paths`);
+      // 服务器端按 Windows 相对路径做前缀匹配，统一成 bin\Res 的形式；带 . 和 .. 的写法匹配不上会悄悄失效
+      site.exclude = site.exclude.map((p) => {
+        const n = win32.normalize(p).replace(/^\\+|\\+$/g, '');
+        if (!n || n === '.' || n === '..' || n.startsWith('..\\') || win32.isAbsolute(n)) throw new Error(`${file}: exclude "${p}" of site "${name}" is not a relative path inside the package`);
+        return n;
+      });
+    }
   }
   return { region, oss, instances, sites, credential: newCredential() };
 }

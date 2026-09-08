@@ -3,6 +3,7 @@ $url = '__URL__'
 $deployId = '__DEPLOY_ID__'
 $message = '__MESSAGE__'
 $checkOnly = '__CHECK_ONLY__' -eq 'true'
+$exclude = @('__EXCLUDE__' -split "`n" | Where-Object { $_ })
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $web = Get-AcaSite $site
@@ -23,15 +24,21 @@ try {
   Invoke-WebRequest -Uri $url -OutFile "$work\pkg.zip" -UseBasicParsing
   [IO.Compression.ZipFile]::ExtractToDirectory("$work\pkg.zip", $new)
   # 包里文件名的 [ ] 会被当通配符，按路径操作的命令都用 -LiteralPath
-  $files = @(Get-ChildItem -LiteralPath $new -Recurse -File)
+  $all = @(Get-ChildItem -LiteralPath $new -Recurse -File)
+  # exclude 是服务器自己维护的路径，全量构建的包会带上它们，不能覆盖
+  $files = @($all | Where-Object {
+    $rel = $_.FullName.Substring($new.Length + 1)
+    -not @($exclude | Where-Object { $rel -eq $_ -or $rel.StartsWith($_ + '\', 'OrdinalIgnoreCase') })
+  })
+  if ($files.Count -lt $all.Count) { "Excluded $($all.Count - $files.Count) files ($($exclude -join ', '))" }
   if (-not $files) { throw 'Package is empty' }
   $rels = @($files | ForEach-Object { $_.FullName.Substring($new.Length + 1) })
   $src = @($rels | Where-Object { $_ -match '^(\.git|\.vs|obj|node_modules)\\|\.(csproj|sln|cs)$' })
   if ($src) { throw "Package looks like a source directory, not publish output, e.g. $($src[0..2] -join ', ')" }
-  if ($rels -contains 'web.config') { throw 'Package root contains web.config, which would overwrite the environment config on the server; remove it from the package' }
+  if ($rels -contains 'web.config') { throw 'Package root contains web.config, which would overwrite the environment config on the server; add web.config to exclude for this site in the aca config' }
   if ($rels -contains 'aca-manifest.txt') { throw 'Package root contains aca-manifest.txt, which would overwrite the backup manifest of the same name; remove it from the package' }
   $rootTop = @(Get-ChildItem -LiteralPath $root | ForEach-Object Name)
-  $pkgTop = @(Get-ChildItem -LiteralPath $new | ForEach-Object Name)
+  $pkgTop = @($rels | ForEach-Object { ($_ -split '\\')[0] } | Select-Object -Unique)
   if ($rootTop -and -not @($pkgTop | Where-Object { $rootTop -contains $_ })) {
     throw "Package top level ($($pkgTop -join ', ')) shares nothing with the top level of the site directory; wrong site?"
   }

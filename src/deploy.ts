@@ -11,7 +11,7 @@ export type DeployOptions = { check?: boolean; message?: string };
 
 // 多台服务器按配置顺序逐台发布，一台失败就停：坏包只影响一台，负载均衡下其余服务器继续服务
 export async function* deploy(cfg: Config, site: string, path: string | undefined, { check = false, message = '' }: DeployOptions): AsyncGenerator<[string, RunResult]> {
-  const { instances, publish } = getSite(cfg, site);
+  const { instances, publish, exclude = [] } = getSite(cfg, site);
   const localPath = path ?? publish;
   if (!localPath) throw new Error(`No package path given and site ${site} has no publish directory in the config`);
   const isDir = statSync(localPath).isDirectory();
@@ -29,7 +29,7 @@ export async function* deploy(cfg: Config, site: string, path: string | undefine
     // 每台服务器现签一个链接，有效期同这台的运行时限：STS 类凭证签出的链接随 token 失效，整批共用一个，排在后面的服务器会下载失败
     const script = renderScript('deploy', {
       SITE: site, URL: await signForEcs(cfg, objectName, timeout), DEPLOY_ID: deployId, MESSAGE: message,
-      CHECK_ONLY: String(check),
+      CHECK_ONLY: String(check), EXCLUDE: exclude.join('\n'),
     });
     const r = await ecs.runPowerShell(name, script, timeout);
     yield [name, r];
