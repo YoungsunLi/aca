@@ -23,7 +23,9 @@ if ($startErr) {
   Add-AcaLog $root "rollback $($lines[0]) files restored but start failed | $startErr"
   throw "Files restored, but $startErr"
 }
-Add-AcaLog $root "rollback $($lines[0]) | restored $($files.Count) deleted $($added.Count)"
+# 回退到的那一版本来是否健康无从对照，首页状态只报告不判失败，只探一次给云助手 600 秒留余量
+$after = Get-AcaHomeStatus $web 1
+Add-AcaLog $root "rollback $($lines[0]) | restored $($files.Count) deleted $($added.Count) | home $(Format-AcaHome $after)"
 # 备份用过即删，再次回退就会退到更早一次发布；删不掉只是下次会重复同样的恢复，不算失败
 try { Remove-Item -LiteralPath $backup -Recurse -Force } catch { "WARN: backup directory not removed, the next rollback will repeat this one: $($_.Exception.Message)" }
-"OK: $($web.name) rolled back deploy $($lines[0]): restored $($files.Count) files, deleted $($added.Count) added files"
+"OK: $($web.name) rolled back deploy $($lines[0]): restored $($files.Count) files, deleted $($added.Count) added files, home $(Format-AcaHome $after)"

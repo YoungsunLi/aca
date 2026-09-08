@@ -51,6 +51,9 @@ try {
   $addedDll = @($added | Where-Object { $_ -match '\.dll$' })
   if ($addedDll) { "New DLLs (not on the site yet; either new dependencies or the wrong site): $(($addedDll | Select-Object -First 20) -join ', ')" }
   if ($added) { "New files: $(($added | Select-Object -First 20) -join ', ')" }
+  # 发布前的首页状态留着对照：发布后坏了才知道是这次包的问题还是本来就坏
+  $before = Get-AcaHomeStatus $web 1
+  "Home page now: $(Format-AcaHome $before)"
   if ($checkOnly) { 'CHECK OK (not deployed)'; return }
 
   try {
@@ -76,8 +79,14 @@ try {
     Add-AcaLog $root "deploy $deployId files overwritten but start failed | $startErr | $message"
     throw "Files overwritten, but $startErr"
   }
-  Add-AcaLog $root "deploy $deployId | overwrote $($rels.Count - $added.Count) added $($added.Count) | $message"
-  "OK: $site -> $root  (backup: $backup)"
+  $after = Get-AcaHomeStatus $web 3
+  $homeText = "home $(Format-AcaHome $after) (before: $(Format-AcaHome $before))"
+  if (Test-AcaHomeBroken $after $before) {
+    Add-AcaLog $root "deploy $deployId files overwritten and site started, but $homeText | $message"
+    throw "Files overwritten and site started, but $homeText; if this deploy broke the site, undo it with aca rollback"
+  }
+  Add-AcaLog $root "deploy $deployId | overwrote $($rels.Count - $added.Count) added $($added.Count) | $homeText | $message"
+  "OK: $site -> $root  $homeText  (backup: $backup)"
 } finally {
   Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 }
