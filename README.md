@@ -42,8 +42,10 @@ skill 按 Agent Skills 开放标准编写，也可以手动复制仓库里的 `.
       "project": "MyApp.Web",
       "publish": "D:\\Publish\\MyApp",
       "exclude": ["web.config", "bin/Res"],
+      "stage": "Default Web Site TEST",
       "note": "正式站"
-    }
+    },
+    "Default Web Site TEST": { "instances": ["web1"], "publish": "D:\\Publish\\MyApp", "exclude": ["web.config", "bin/Res"] }
   }
 }
 ```
@@ -55,6 +57,7 @@ skill 按 Agent Skills 开放标准编写，也可以手动复制仓库里的 `.
 | `instances` | 跑这个站点的服务器（别名或实例 ID），顺序即发布顺序 |
 | `publish` | 本机的发布目录，`deploy` 省略路径时用它 |
 | `exclude` | 包里不发布的路径（目录或文件）：服务器上自己维护的密钥、环境配置，把路径列在这里，发布就不会覆盖它们 |
+| `stage` | 指向预发布站：发本站时，包必须是预发布站最近一次成功发布的同一份（按内容哈希，重新构建就不算同一份），预发布回退过也不算，`--skip-stage` 跳过这项要求。两边要用同一种输入：都给目录，或都给同一个 zip 文件 |
 | `project`<br>`note` | 只在 `aca sites` 里显示，方便认出是哪个站点 |
 
 ### 凭证和权限

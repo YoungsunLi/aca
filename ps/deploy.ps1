@@ -1,6 +1,7 @@
 $site = '__SITE__'
 $url = '__URL__'
 $deployId = '__DEPLOY_ID__'
+$package = '__PACKAGE__'
 $message = '__MESSAGE__'
 $checkOnly = '__CHECK_ONLY__' -eq 'true'
 $force = '__FORCE__' -eq 'true'
@@ -11,7 +12,7 @@ $web = Get-AcaSite $site
 $root = Get-AcaRoot $web
 $pool = $web.applicationPool
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$work = Join-Path $env:TEMP "aca-$stamp"
+$work = Join-Path $env:TEMP "aca-$([guid]::NewGuid())"
 $new = Join-Path $work 'new'
 $backup = "$root.bak-$stamp"
 $manifest = Join-Path $backup 'aca-manifest.txt'
@@ -105,7 +106,8 @@ try {
     Add-AcaLog $root "deploy $deployId files overwritten and site started, but $homeText | $message"
     throw "Files overwritten and site started, but $homeText; if this deploy broke the site, undo it with aca rollback"
   }
-  Add-AcaLog $root "deploy $deployId | overwrote $($rels.Count - $added.Count) added $($added.Count) | $homeText | $message"
+  # 成功行的格式被 deploy.ts 的 assertStaged 用来判断预发布是否发过这个包，改格式两边一起改
+  Add-AcaLog $root "deploy $deployId | pkg=$package | overwrote $($rels.Count - $added.Count) added $($added.Count) | $homeText | $message"
   "OK: $site -> $root  $homeText  (backup: $backup)"
 } finally {
   if ($lock) { $lock.Close() }

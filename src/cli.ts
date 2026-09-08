@@ -37,6 +37,7 @@ program.command('deploy <site> [path]').description('Deploy a directory or zip t
   .option('-c, --check', 'upload and pre-check only: list the files to overwrite and add, without stopping the site')
   .option('-m, --message <text>', 'note for the deploy log on the server, e.g. the commit range or branch')
   .option('-f, --force', 'deploy even if the package has files older than those on the server')
+  .option('--skip-stage', 'do not require the package to be the latest deploy on the stage site')
   .action(async (site: string, path: string | undefined, opts: DeployOptions) => {
     // 说明会原样写成服务器发布记录的一行，含换行就能伪造出别的记录行
     if (/[\r\n]/.test(opts.message ?? '')) throw new Error('-m must be a single line');
