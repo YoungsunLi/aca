@@ -15,12 +15,15 @@ $work = Join-Path $env:TEMP "aca-$stamp"
 $new = Join-Path $work 'new'
 $backup = "$root.bak-$stamp"
 $manifest = Join-Path $backup 'aca-manifest.txt'
+$lock = $null
 
 $shared = @(Get-Website | Where-Object { $_.name -ne $site -and $_.applicationPool -eq $pool } | ForEach-Object name)
 if ($shared) { "NOTE: app pool $pool is shared with site(s) $($shared -join ', '), which will also be down for a few seconds" }
 
 New-Item -ItemType Directory -Path $work | Out-Null
 try {
+  # 下载前就加锁：后面算的"新增文件"等都依赖站点目录此刻的样子，中途被别的发布改了备份清单就错了
+  if (-not $checkOnly) { $lock = Lock-AcaSite $root }
   # 先下载并解压、做完检查再停站，缩短停机时间
   Invoke-WebRequest -Uri $url -OutFile "$work\pkg.zip" -UseBasicParsing
   [IO.Compression.ZipFile]::ExtractToDirectory("$work\pkg.zip", $new)
@@ -105,5 +108,6 @@ try {
   Add-AcaLog $root "deploy $deployId | overwrote $($rels.Count - $added.Count) added $($added.Count) | $homeText | $message"
   "OK: $site -> $root  $homeText  (backup: $backup)"
 } finally {
+  if ($lock) { $lock.Close() }
   Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 }
