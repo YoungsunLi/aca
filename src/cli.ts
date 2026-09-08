@@ -36,6 +36,7 @@ program.command('run <instance> <script>').description('Run PowerShell on a serv
 program.command('deploy <site> [path]').description('Deploy a directory or zip to a configured IIS site, one server at a time; path defaults to the site\'s publish directory')
   .option('-c, --check', 'upload and pre-check only: list the files to overwrite and add, without stopping the site')
   .option('-m, --message <text>', 'note for the deploy log on the server, e.g. the commit range or branch')
+  .option('-f, --force', 'deploy even if the package has files older than those on the server')
   .action(async (site: string, path: string | undefined, opts: DeployOptions) => {
     // 说明会原样写成服务器发布记录的一行，含换行就能伪造出别的记录行
     if (/[\r\n]/.test(opts.message ?? '')) throw new Error('-m must be a single line');

@@ -3,6 +3,7 @@ $url = '__URL__'
 $deployId = '__DEPLOY_ID__'
 $message = '__MESSAGE__'
 $checkOnly = '__CHECK_ONLY__' -eq 'true'
+$force = '__FORCE__' -eq 'true'
 $exclude = @('__EXCLUDE__' -split "`n" | Where-Object { $_ })
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
@@ -42,19 +43,35 @@ try {
   if ($rootTop -and -not @($pkgTop | Where-Object { $rootTop -contains $_ })) {
     throw "Package top level ($($pkgTop -join ', ')) shares nothing with the top level of the site directory; wrong site?"
   }
-  $size = ($files | Measure-Object Length -Sum).Sum
-  $free = (Get-PSDrive $root.Substring(0, 1)).Free
-  if ($free -lt 2 * $size) { throw "Only $([int]($free / 1MB))MB free on the site drive, not enough for backup plus overwrite (about $([int](2 * $size / 1MB))MB needed)" }
 
   $added = @($rels | Where-Object { -not (Test-Path -LiteralPath (Join-Path $root $_)) })
   "$site -> $root  $($rels.Count) files in package: $($rels.Count - $added.Count) to overwrite, $($added.Count) new"
   $addedDll = @($added | Where-Object { $_ -match '\.dll$' })
   if ($addedDll) { "New DLLs (not on the site yet; either new dependencies or the wrong site): $(($addedDll | Select-Object -First 20) -join ', ')" }
   if ($added) { "New files: $(($added | Select-Object -First 20) -join ', ')" }
+  $newest = $files | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+  "Newest file in package: $($newest.FullName.Substring($new.Length + 1))  $($newest.LastWriteTime.ToString('yyyy-MM-dd HH:mm'))"
+  # 备份的是被覆盖的旧文件，盘上要放得下它们再加上新包
+  $need = ($files | Measure-Object Length -Sum).Sum
+  # 包比服务器旧：要么拿错了旧构建，要么服务器上有人手改过，两种都不该悄悄覆盖。
+  # 预检查只提示不拦，站点有多台服务器时才能一次看全所有服务器再决定要不要 --force
+  $older = @()
+  for ($i = 0; $i -lt $files.Count; $i++) {
+    if ($added -contains $rels[$i]) { continue }
+    $existing = Get-Item -LiteralPath (Join-Path $root $rels[$i])
+    $need += $existing.Length
+    if ($existing.LastWriteTime -gt $files[$i].LastWriteTime.AddMinutes(1)) { $older += $rels[$i] }
+  }
+  $free = (Get-PSDrive $root.Substring(0, 1)).Free
+  if ($free -lt $need) { throw "Only $([int]($free / 1MB))MB free on the site drive, not enough for backup plus overwrite (about $([int]($need / 1MB))MB needed)" }
+  if ($older) {
+    "Files older than the copies on the server: $(($older | Select-Object -First 20) -join ', ')"
+    if (-not $force -and -not $checkOnly) { throw "$($older.Count) files in the package are older than the copies on the server; pass --force to overwrite them anyway" }
+  }
   # 发布前的首页状态留着对照：发布后坏了才知道是这次包的问题还是本来就坏
   $before = Get-AcaHomeStatus $web 1
   "Home page now: $(Format-AcaHome $before)"
-  if ($checkOnly) { 'CHECK OK (not deployed)'; return }
+  if ($checkOnly) { "CHECK OK (not deployed$(if ($older -and -not $force) { '; deploying needs --force' }))"; return }
 
   try {
     Stop-AcaSite $web
