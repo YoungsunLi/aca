@@ -10,6 +10,42 @@ function Get-AcaSite($name) {
 }
 # 去掉末尾反斜杠，否则 "$root.bak-x" 会落到站点目录里面被 IIS 对外提供
 function Get-AcaRoot($web) { [Environment]::ExpandEnvironmentVariables($web.physicalPath).TrimEnd('\') }
+# 带 aca-manifest.txt 的才是 aca 建的；.trash- 是清理时改了名、等着删的旧备份。名字里带时间，按名字排就是从旧到新。
+# 名字要整个对上：旁边若有站点目录叫 <leaf>.bak-xxx，它的备份也会被 -Filter 匹配到
+function Get-AcaBackups($root, $kind = 'bak') {
+  $prefix = (Split-Path $root -Leaf) + ".$kind-"
+  Get-ChildItem -LiteralPath (Split-Path $root) -Directory -Filter "$prefix*" |
+    Where-Object { $_.Name -match ('^' + [regex]::Escape($prefix) + '\d{8}-\d{6}$') -and (Test-Path -LiteralPath (Join-Path $_.FullName 'aca-manifest.txt')) } |
+    Sort-Object Name
+}
+# 只留最近 $keep 份备份，$backup 是刚做的那份
+function Remove-AcaOldBackups($root, $backup, $keep) {
+  $leaf = Split-Path $root -Leaf
+  # 刚做的这份单独留着：服务器时间往回调过的话，按名字排它不一定在最后
+  $baks = @(Get-AcaBackups $root | Where-Object { $_.FullName -ne $backup })
+  for ($i = 0; $i -lt $baks.Count - ($keep - 1); $i++) {
+    $b = $baks[$i]
+    try {
+      # 回退计划靠它分辨某台服务器缺的备份是被清理了，还是这台服务器没参与那次发布；只追加，写的时候被杀也丢不了之前的记录
+      Add-Content -LiteralPath "$root.aca-pruned" -Value @(Get-Content -LiteralPath (Join-Path $b.FullName 'aca-manifest.txt'))[0]
+      # 改名是原子的：改完就不再是备份，后面删到一半失败也不会被拿去回退
+      Rename-Item -LiteralPath $b.FullName -NewName "$leaf.trash-$($b.Name -replace '^.*\.bak-')"
+      "Removed old backup $($b.FullName)"
+    } catch {
+      # 留着更旧的却删掉较新的，回退链会断档，所以失败就停，下次发布再从这份删起
+      "WARN: could not remove old backup $($b.FullName), stopping cleanup until the next deploy: $($_.Exception.Message)"
+      break
+    }
+  }
+  # 这次改名的和以前没删干净的一起删；清单留到最后，删到一半失败时下次还认得出是 aca 的
+  Get-AcaBackups $root 'trash' | ForEach-Object {
+    $d = $_.FullName
+    try {
+      Get-ChildItem -LiteralPath $d -Force | Where-Object { $_.Name -ne 'aca-manifest.txt' } | Remove-Item -Recurse -Force
+      Remove-Item -LiteralPath $d -Recurse -Force
+    } catch { "WARN: $d not fully deleted, will retry on the next deploy: $($_.Exception.Message)" }
+  }
+}
 function Copy-AcaFile($src, $dst) {
   New-Item -ItemType Directory -Path (Split-Path $dst) -Force | Out-Null
   Copy-Item -LiteralPath $src -Destination $dst -Force

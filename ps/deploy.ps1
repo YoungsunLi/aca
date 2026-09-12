@@ -5,6 +5,7 @@ $package = '__PACKAGE__'
 $message = '__MESSAGE__'
 $checkOnly = '__CHECK_ONLY__' -eq 'true'
 $force = '__FORCE__' -eq 'true'
+$keep = [int]'__KEEP__'
 $exclude = @('__EXCLUDE__' -split "`n" | Where-Object { $_ })
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
@@ -108,6 +109,7 @@ try {
   }
   # 成功行的格式被 deploy.ts 的 assertStaged 用来判断预发布是否发过这个包，改格式两边一起改
   Add-AcaLog $root "deploy $deployId | pkg=$package | overwrote $($rels.Count - $added.Count) added $($added.Count) | $homeText | $message"
+  Remove-AcaOldBackups $root $backup $keep
   "OK: $site -> $root  $homeText  (backup: $backup)"
 } finally {
   if ($lock) { $lock.Close() }

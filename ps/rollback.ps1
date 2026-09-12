@@ -5,8 +5,7 @@ $root = Get-AcaRoot $web
 $lock = Lock-AcaSite $root
 try {
   # 计划和执行之间可能又发布过一次，那样该退的是更新的那份备份
-  $newest = Get-ChildItem -LiteralPath (Split-Path $root) -Directory -Filter ((Split-Path $root -Leaf) + '.bak-*') |
-    Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'aca-manifest.txt') } | Sort-Object Name | Select-Object -Last 1
+  $newest = Get-AcaBackups $root | Select-Object -Last 1
   if ($newest.FullName -ne $backup) { throw "The site was deployed again after this rollback was planned (newest backup: $($newest.FullName)); run rollback again" }
   $manifest = Join-Path $backup 'aca-manifest.txt'
   $lines = @(Get-Content -LiteralPath $manifest)

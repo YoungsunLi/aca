@@ -9,6 +9,8 @@ export type RollbackPlan = { site: string; deployId: string; steps: { name: stri
 export async function planRollback(cfg: Config, site: string): Promise<RollbackPlan> {
   const ecs = new Ecs(cfg);
   const backups = new Map<string, Backup[]>();
+  // 每台服务器按 keep 清理到了哪次发布，没清理过是空串
+  const pruned = new Map<string, string>();
   for (const name of getSite(cfg, site).instances) {
     const r = await ecs.runPowerShell(name, renderScript('backups', { SITE: site }), 120);
     if (r.status !== 'Success') throw new Error(`${name}: failed to list backups: ${r.output.trim() || r.error}`);
@@ -17,10 +19,15 @@ export async function planRollback(cfg: Config, site: string): Promise<RollbackP
     backups.set(name, [...r.output.matchAll(/^(.+)\|(\S+)\|(\d+)\|(\d+)\r?$/gm)].map(([, dir, deployId, restored, added]) => (
       { dir, deployId, restored: Number(restored), added: Number(added) }
     )));
+    pruned.set(name, /^pruned\|(.+?)\r?$/m.exec(r.output)?.[1] ?? '');
   }
   const deployId = [...backups.values()].flat().map((b) => b.deployId).sort().at(-1);
   if (!deployId) throw new Error(`${site} has no backups to roll back to`);
-  return { site, deployId, steps: [...backups].map(([name, list]) => ({ name, backup: list.find((b) => b.deployId === deployId) })) };
+  const steps = [...backups].map(([name, list]) => ({ name, backup: list.find((b) => b.deployId === deployId) }));
+  // 清理到这次或更晚发布的机器缺这份备份，可能是备份被清理了而不是没参与；跳过它只退其它服务器，各服务器的版本就不一致了
+  const unsure = steps.find(({ name, backup }) => !backup && pruned.get(name)! >= deployId);
+  if (unsure) throw new Error(`${unsure.name} has pruned backups (keep) up to deploy ${pruned.get(unsure.name)}, so it cannot tell whether it missed deploy ${deployId} or its backup was pruned; to go back further, redeploy an older build`);
+  return { site, deployId, steps };
 }
 
 export async function* rollback(cfg: Config, plan: RollbackPlan): AsyncGenerator<[string, RunResult]> {

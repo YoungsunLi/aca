@@ -14,6 +14,8 @@ export type Site = {
   exclude?: string[];
   /** 预发布站：发本站时包必须是那边最近一次发布的同一份 */
   stage?: string;
+  /** 每台服务器上为本站保留的备份份数，rollback 最多能连退这么多次 */
+  keep?: number;
   note?: string;
 };
 export type Config = {
@@ -41,6 +43,7 @@ export function loadConfig(): Config {
     const bad = site.instances.find((i) => !Object.hasOwn(instances, i) && !i.startsWith('i-'));
     if (bad) throw new Error(`${file}: "${bad}" in site "${name}" is neither an alias from instances nor an instance ID`);
     if (site.stage !== undefined && (typeof site.stage !== 'string' || site.stage === name || !Object.hasOwn(sites, site.stage))) throw new Error(`${file}: stage "${site.stage}" of site "${name}" is not another site in sites`);
+    if (site.keep !== undefined && !(Number.isInteger(site.keep) && site.keep > 0)) throw new Error(`${file}: keep of site "${name}" must be a positive integer`);
     if (site.exclude !== undefined) {
       if (!Array.isArray(site.exclude) || !site.exclude.every((p) => typeof p === 'string')) throw new Error(`${file}: exclude of site "${name}" must be an array of paths`);
       // 服务器端按 Windows 相对路径做前缀匹配，统一成 bin\Res 的形式；带 . 和 .. 的写法匹配不上会悄悄失效。
