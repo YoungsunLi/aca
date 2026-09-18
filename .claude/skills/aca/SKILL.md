@@ -5,7 +5,7 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
 
 # aca：阿里云 ECS / IIS 发布
 
-前提：配置文件在 `ACA_CONFIG` 指向的路径或 `~/.aca/config.json`，凭证在环境变量或 `aliyun configure` 写的 `~/.aliyun/config.json` 里。
+前提：aca 用 `npm install -g aca-cli` 安装，找不到命令就请用户先装；配置文件在 `ACA_CONFIG` 指向的路径或 `~/.aca/config.json`，凭证在环境变量或 `aliyun configure` 写的 `~/.aliyun/config.json` 里。
 
 ## 权限
 

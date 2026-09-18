@@ -23,7 +23,8 @@
   },
   "files": [
     "dist",
-    "ps"
+    "ps",
+    ".claude/skills"
   ],
   "scripts": {
     "prepare": "tsc"

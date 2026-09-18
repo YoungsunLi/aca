@@ -21,13 +21,11 @@
 需要 Node 22.12+。
 
 ```sh
-npm install -g aca-cli            # aca 命令
-npx skills add YoungsunLi/aca -g  # 给 Agent 装 skill
+npm install -g aca-cli
+aca skill install  # 给 Claude Code、Codex 装上 skill，升级 aca 后再跑一次
 ```
 
-`npx skills add` 会问装给哪些 Agent，不加 `-g` 则装进当前项目。
-
-skill 按 Agent Skills 开放标准编写，也可以手动复制仓库里的 `.claude/skills/aca/`：Claude Code 放到 `~/.claude/skills/`，Codex 放到 `~/.agents/skills/`，只给某个项目用就放进项目里的同名目录。
+其他支持 Agent Skills 开放标准的 Agent 用 `npx skills add YoungsunLi/aca -g` 装，它会问装给哪些 Agent；装的是 GitHub 上最新的 skill，不一定和本机 aca 的版本一致。
 
 ## 配置
 

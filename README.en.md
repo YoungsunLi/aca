@@ -21,13 +21,11 @@ Run PowerShell on Windows ECS instances and deploy or roll back IIS sites throug
 Requires Node 22.12+.
 
 ```sh
-npm install -g aca-cli            # the aca command
-npx skills add YoungsunLi/aca -g  # the skill for your agents
+npm install -g aca-cli
+aca skill install  # the skill for Claude Code and Codex; run it again after upgrading aca
 ```
 
-`npx skills add` asks which agents to install it for; without `-g` it goes into the current project.
-
-The skill follows the open Agent Skills standard, so you can also copy `.claude/skills/aca/` from the repository by hand: into `~/.claude/skills/` for Claude Code or `~/.agents/skills/` for Codex, or into the same directories inside a project to use it only there.
+Other agents that support the open Agent Skills standard can install it with `npx skills add YoungsunLi/aca -g`, which asks which agents to install it for; it installs the latest skill on GitHub, which may not match your aca version.
 
 ## Configuration
 

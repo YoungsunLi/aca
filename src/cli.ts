@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
+import { cpSync, readFileSync, rmSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { Command } from 'commander';
 import { getSite, loadConfig } from './config.ts';
 import { deploy, type DeployOptions } from './deploy.ts';
@@ -65,6 +67,18 @@ program.command('rollback <site>').description('Roll back the latest deploy of a
         : `no backup of deploy ${plan.deployId}, skipped`}`);
     }
     if (!opts.check) await reportEach(rollback(cfg, plan));
+  });
+
+program.command('skill').description('Agent Skill that lets Claude Code, Codex and other agents use aca')
+  .command('install').description('Install or update the skill in ~/.claude/skills (Claude Code) and ~/.agents/skills (Codex); run again after upgrading aca')
+  .action(() => {
+    for (const agentDir of ['.claude', '.agents']) {
+      const dst = join(homedir(), agentDir, 'skills', 'aca');
+      // 先删再拷，旧版多出来的文件不留；npx skills 装的是链接，rmSync 删的是链接本身
+      rmSync(dst, { recursive: true, force: true });
+      cpSync(new URL('../.claude/skills/aca', import.meta.url), dst, { recursive: true });
+      console.log(`Installed ${dst}`);
+    }
   });
 
 async function reportEach(results: AsyncIterable<[string, RunResult]>) {
