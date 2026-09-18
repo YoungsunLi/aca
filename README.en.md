@@ -1,0 +1,149 @@
+<div align="center">
+
+# aca — Aliyun Cloud Assistant CLI
+
+[![npm](https://img.shields.io/npm/v/aca-cli?logo=npm)](https://www.npmjs.com/package/aca-cli)
+[![node](https://img.shields.io/node/v/aca-cli?logo=nodedotjs)](https://nodejs.org/)
+[![license](https://img.shields.io/npm/l/aca-cli)](LICENSE)
+
+[简体中文](README.md) | English
+
+</div>
+
+Run PowerShell on Windows ECS instances and deploy or roll back IIS sites through Alibaba Cloud [Cloud Assistant](https://www.alibabacloud.com/help/en/ecs/user-guide/overview-10).
+
+- **Nothing to install and no ports to open on the servers**, just an AccessKey.
+- **Plain-text output** with non-zero exit codes on failure.
+- **Comes with an Agent Skill**: tell Claude Code, Codex or another agent "deploy MyApp to the test site", and it runs `--check` first, shows you the result and deploys after you confirm.
+
+## Install
+
+Requires Node 22.12+.
+
+```sh
+npm install -g aca-cli            # the aca command
+npx skills add YoungsunLi/aca -g  # the skill for your agents
+```
+
+`npx skills add` asks which agents to install it for; without `-g` it goes into the current project.
+
+The skill follows the open Agent Skills standard, so you can also copy `.claude/skills/aca/` from the repository by hand: into `~/.claude/skills/` for Claude Code or `~/.agents/skills/` for Codex, or into the same directories inside a project to use it only there.
+
+## Configuration
+
+Write a config at `~/.aca/config.json`, or point the `ACA_CONFIG` environment variable at another path.
+
+```json
+{
+  "region": "cn-hangzhou",
+  "oss": { "bucket": "my-deploy-bucket", "prefix": "deploy/" },
+  "instances": { "web1": "i-bp1xxxxxxxx", "web2": "i-bp1yyyyyyyy" },
+  "sites": {
+    "Default Web Site": {
+      "instances": ["web1", "web2"],
+      "project": "MyApp.Web",
+      "publish": "D:\\Publish\\MyApp",
+      "exclude": ["web.config", "bin/Res"],
+      "stage": "Default Web Site TEST",
+      "note": "production"
+    },
+    "Default Web Site TEST": { "instances": ["web1"], "publish": "D:\\Publish\\MyApp", "exclude": ["web.config", "bin/Res"] }
+  }
+}
+```
+
+The keys of `sites` are IIS site names; `deploy` only accepts sites registered here. Every field except `instances` is optional:
+
+| Field | Description |
+| --- | --- |
+| `instances` | The servers (aliases or instance IDs) hosting the site, in deploy order |
+| `publish` | The publish directory on this machine, used when `deploy` is given no path |
+| `exclude` | Paths in the package (directories or files) that are not deployed: list where the server keeps its own secrets and environment config, and deploys won't overwrite them |
+| `stage` | Names the staging site: this site only takes the package that was the latest successful deploy on the staging site (by content hash, so a rebuild is a different package), and not once the staging site has rolled it back; `--skip-stage` skips this requirement. Both sides must use the same kind of input: both a directory, or both the same zip file |
+| `keep` | How many backups of the site each server keeps, 5 by default; `rollback` can go back at most that many times |
+| `project`<br>`note` | Only shown by `aca sites`, to help find the right site |
+
+### Credentials and permissions
+
+Credentials are resolved by the Alibaba Cloud SDK's [default credential chain](https://www.alibabacloud.com/help/en/sdk/developer-reference/v2-manage-node-js-access-credentials), shared with the Alibaba Cloud CLI: once you have run `aliyun configure` there is nothing more to set up; you can also set the environment variables `ALIBABA_CLOUD_ACCESS_KEY_ID` and `ALIBABA_CLOUD_ACCESS_KEY_SECRET`, which take precedence over `aliyun configure`.
+
+**RAM permissions**: `ecs:DescribeInstances`, `ecs:RunCommand`, `ecs:DescribeInvocationResults`, `oss:PutObject`, `oss:GetObject`.
+
+> [!WARNING]
+> Cloud Assistant runs scripts as SYSTEM: whoever holds this AccessKey, human or agent, is an administrator of every instance `ecs:RunCommand` is granted on. Grant it per instance ID, never `*`.
+
+## Constraints
+
+- **ECS and the OSS bucket are in the same region**; packages are downloaded over the OSS internal network.
+- **Servers need the [Cloud Assistant client](https://www.alibabacloud.com/help/en/ecs/user-guide/install-the-cloud-assistant-agent#775c8cd747xcj)** (preinstalled on servers created from public images since December 2017).
+- **Cloud Assistant returns output in the server's ANSI code page**: characters outside it (e.g. Chinese on English Windows) in site names, paths and `-m` notes turn into question marks, and `rollback` fails if the site directory path contains any.
+- **The site directory must be a plain directory on a local drive**, not a drive root or a UNC path, and not nested inside another site's directory: backups and the deploy log live next to it.
+- **The `<root>.bak-<time>` backups and `<root>.aca-*` files next to the site directory are aca's state; don't delete them by hand**: without the latest backup, `rollback` skips that deploy and restores a mix that was never deployed.
+- **After a deploy the site and its app pool are started**, even if they had been stopped by hand.
+- **This machine and the servers must be in the same time zone**: file times in the package are stored as local time, and the check for files older than the copies on the server relies on them.
+- **Packages (`--check` uploads too) stay in OSS under `<prefix><site>/`**; aca doesn't delete them; set up a lifecycle rule on the bucket to expire them.
+
+## Commands
+
+```sh
+aca instances                                   # list instances
+aca sites                                       # list sites with their project, publish directory and instances
+aca run web1 "Get-Website | select name,state"  # run any PowerShell as SYSTEM
+aca deploy "Default Web Site" ./publish --check # pre-check only: list the files to overwrite and add, the site keeps running
+aca deploy "Default Web Site" ./publish -m "release-2026-09"  # directory or zip; -m goes into the deploy log
+aca status "Default Web Site"                   # newest file time + last 5 deploy/rollback entries of each server
+aca rollback "Default Web Site" --check         # see which deploy each server would roll back
+aca rollback "Default Web Site"                 # roll back the latest deploy
+```
+
+### `aca run`
+
+aca runs any PowerShell on the server as SYSTEM and prints the output when it finishes; if the script exits non-zero (an uncaught exception included), aca exits with the same code.
+
+- **Handy for ad-hoc operations** such as reading logs, checking disk space or restarting an app pool; the instance can be an alias from the config or any instance ID in the configured region.
+- **`-t` kills the script after this many seconds** (default 300).
+- **By default a failing PowerShell command only reports an error** and the exit code stays 0; start the script with `$ErrorActionPreference = 'Stop'` to make any error a failure.
+- **The script plus the prefix aca adds must fit in 24 KB after base64** (about 18 KB of plain English text); output beyond the Cloud Assistant limit is cut off and aca reports how many bytes were dropped, so filter large output in the script.
+- **Change site files with `aca deploy`**: whatever you change with `aca run` has no backup, and `aca rollback` can't undo it.
+
+### `aca deploy`
+
+On each server, aca runs: download and extract → pre-check → stop the site → back up the files about to be overwritten to `<root>.bak-<time>` → copy over → start the site → check the home page → delete backups beyond the latest `keep`.
+
+- **Deploys are incremental**: whatever is in the package gets overwritten (except `exclude`), so you can ship just a few changed files; uploads, logs and `web.config` already on the site stay untouched, and files removed from the package are not cleaned up.
+- **When the pre-check fails** (source code traces, a `web.config` at the package root, looks like the wrong site, not enough disk space, files older than the copies on the server), aca exits without stopping the site. Files older than the copies on the server mean an old build was picked up, or someone edited files on the server; add `-f` if you do want to overwrite them.
+- **The home page check** requests `/` over the site's http binding on the server itself; a 5xx or no connection that differs from the status before the deploy fails that server; files are not rolled back automatically. The pre-check prints the home page status before the deploy; sites with only https bindings are not checked.
+- **aca deploys the servers one at a time** and stops at the first failure; servers already deployed are not rolled back automatically.
+- **Only one `deploy` or `rollback` at a time can change a site on a server**; the other one reports `Another aca operation is modifying this site`.
+  - The lock is an exclusive handle on `<root>.aca-lock` next to the site directory, released when the script ends or is killed; the file staying around doesn't mean anyone holds it.
+  - **Locks are per server**: two people deploying the same site on several servers at once may each get to different servers; compare the servers with `aca status` afterwards.
+
+#### After a failed deploy
+
+Whether you undo this deploy or fix it and deploy again, first run `aca rollback <site> --check`:
+
+- if it would roll back this deploy (the deploy ID is its start time in UTC), roll back first;
+- if it shows an earlier deploy, no server got this one and there is nothing to roll back.
+
+> [!WARNING]
+> If you deploy again without rolling back first, the servers that got this deploy back up its files, so a rollback afterwards only takes them back to this deploy, not to the version before it.
+
+### `aca rollback`
+
+Restores the latest backup, deletes the files that deploy added, restarts the site, then deletes that backup; rolling back again goes to the deploy before it.
+
+## Polling failures and timeouts
+
+- **When aca reports `Polling Cloud Assistant results failed` or `Timed out waiting for Cloud Assistant results`**, the script may still be running on the server; run `aca status` before deciding whether to roll back.
+- **If Cloud Assistant kills the script at its 30-minute limit**, no log entry is written, the site and its app pool may be left stopped, and files may be half overwritten. Run `aca rollback <site> --check`: if this server would roll back this deploy, roll back; otherwise its files are untouched, so start the site with:
+
+  ```sh
+  aca run <instance> "Start-WebAppPool (Get-Website '<site>').applicationPool; Start-Website '<site>'"
+  ```
+
+## Disclaimer
+
+> [!CAUTION]
+> aca stops and overwrites production sites. Get it working on a test site first, run `--check` before every deploy, and keep the AccessKey safe.
+
+This software is provided "as is" under the MIT license, without warranty of any kind; see [LICENSE](LICENSE).
