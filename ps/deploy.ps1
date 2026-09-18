@@ -1,5 +1,6 @@
 $site = '__SITE__'
 $url = '__URL__'
+$sha256 = '__SHA256__'
 $deployId = '__DEPLOY_ID__'
 $package = '__PACKAGE__'
 $message = '__MESSAGE__'
@@ -28,6 +29,10 @@ try {
   if (-not $checkOnly) { $lock = Lock-AcaSite $root }
   # 先下载并解压、做完检查再停站，缩短停机时间
   Invoke-WebRequest -Uri $url -OutFile "$work\pkg.zip" -UseBasicParsing
+  # 对 OSS 有写权限的人能在各服务器下载前把包换掉
+  $zip = [IO.File]::OpenRead("$work\pkg.zip")
+  try { $got = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($zip)) -replace '-' } finally { $zip.Close() }
+  if ($got -ne $sha256) { throw 'Downloaded package does not match the local SHA-256: the zip changed during upload, or the package on OSS was replaced' }
   [IO.Compression.ZipFile]::ExtractToDirectory("$work\pkg.zip", $new)
   # 包里文件名的 [ ] 会被当通配符，按路径操作的命令都用 -LiteralPath
   $all = @(Get-ChildItem -LiteralPath $new -Recurse -File)

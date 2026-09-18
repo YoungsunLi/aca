@@ -10,8 +10,9 @@ import { signForEcs, upload } from './oss.ts';
 import { renderScript } from './ps.ts';
 
 export type DeployOptions = { check?: boolean; message?: string; force?: boolean; skipStage?: boolean };
-/** id 是 zip 里字节加 exclude 的内容哈希：同一目录重新构建后 DLL 会变，exclude 改了服务器实际收到的也变 */
-type Package = { zip: string; id: string };
+/** id 是 zip 里字节加 exclude 的内容哈希：同一目录重新构建后 DLL 会变，exclude 改了服务器实际收到的也变。
+ *  sha256 是整个 zip 文件的、和 id 出自同一次读取，服务器下载后核对它，发出去的就一定是 id 说的那份 */
+type Package = { zip: string; id: string; sha256: string };
 
 // 多台服务器按配置顺序逐台发布，一台失败就停：坏包只影响一台，负载均衡下其余服务器继续服务
 export async function* deploy(cfg: Config, site: string, path: string | undefined, { check = false, message = '', force = false, skipStage = false }: DeployOptions): AsyncGenerator<[string, RunResult]> {
@@ -39,7 +40,7 @@ export async function* deploy(cfg: Config, site: string, path: string | undefine
   for (const [i, name] of instances.entries()) {
     // 每台服务器现签一个链接，有效期同这台的运行时限：STS 类凭证签出的链接随 token 失效，整批共用一个，排在后面的服务器会下载失败
     const script = renderScript('deploy', {
-      SITE: site, URL: await signForEcs(cfg, objectName, timeout), DEPLOY_ID: deployId, PACKAGE: pkg.id, MESSAGE: message,
+      SITE: site, URL: await signForEcs(cfg, objectName, timeout), SHA256: pkg.sha256, DEPLOY_ID: deployId, PACKAGE: pkg.id, MESSAGE: message,
       CHECK_ONLY: String(check), FORCE: String(force), EXCLUDE: exclude.join('\n'), KEEP: String(keep),
     });
     const r = await ecs.runPowerShell(name, script, timeout);
@@ -53,9 +54,13 @@ function newHash(exclude: string[]) {
 }
 
 async function hashZip(path: string, exclude: string[]): Promise<Package> {
-  const hash = newHash(exclude);
-  for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
-  return { zip: path, id: hash.digest('hex').slice(0, 12) };
+  const id = newHash(exclude);
+  const sha256 = createHash('sha256');
+  for await (const chunk of createReadStream(path)) {
+    id.update(chunk as Buffer);
+    sha256.update(chunk as Buffer);
+  }
+  return { zip: path, id: id.digest('hex').slice(0, 12), sha256: sha256.digest('hex') };
 }
 
 // 要求预发布站每台服务器的最后一条记录都是这个包的成功发布：最后一条是回退或失败，说明这一版在预发布没过。
@@ -75,6 +80,7 @@ async function assertStaged(cfg: Config, ecs: Ecs, stage: string, packageId: str
 // 等 archiver 写完一个条目再读下一个文件，内存里只有一个文件；哈希的就是写进 zip 的那份字节
 async function zipDir(dir: string, out: string, exclude: string[]): Promise<Package> {
   const hash = newHash(exclude);
+  const sha256 = createHash('sha256');
   // zip 里存本地时间，否则服务器上解出来的文件时间会差一个时区，对不上本地编译时间
   const archive = new ZipArchive({ zlib: { level: 6 }, forceLocalTime: true });
   const closed = new Promise<void>((resolve, reject) => {
@@ -82,6 +88,7 @@ async function zipDir(dir: string, out: string, exclude: string[]): Promise<Pack
     archive.pipe(createWriteStream(out).on('close', resolve).on('error', reject));
   });
   closed.catch(() => {});
+  archive.on('data', (chunk: Buffer) => sha256.update(chunk));
   for (const rel of readdirSync(dir, { recursive: true, encoding: 'utf8' }).sort()) {
     const full = join(dir, rel);
     const stat = statSync(full);
@@ -96,5 +103,5 @@ async function zipDir(dir: string, out: string, exclude: string[]): Promise<Pack
   }
   await archive.finalize();
   await closed;
-  return { zip: out, id: hash.digest('hex').slice(0, 12) };
+  return { zip: out, id: hash.digest('hex').slice(0, 12), sha256: sha256.digest('hex') };
 }
