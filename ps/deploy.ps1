@@ -115,8 +115,8 @@ try {
     Add-AcaLog $root "deploy $deployId files overwritten and site started, but $homeText | $message"
     throw "Files overwritten and site started, but $homeText; if this deploy broke the site, undo it with aca rollback"
   }
-  # 成功行的格式被 deploy.ts 的 assertStaged 用来判断预发布是否发过这个包，改格式两边一起改
-  Add-AcaLog $root "deploy $deployId | pkg=$package | overwrote $($rels.Count - $added.Count) added $($added.Count) | $homeText | $message"
+  # 成功行的格式被 deploy.ts 的 assertStaged 解析，改格式两边一起改
+  Add-AcaLog $root "deploy $deployId | pkg=$package | sha256=$sha256 | overwrote $($rels.Count - $added.Count) added $($added.Count) | $homeText | $message"
   Remove-AcaOldBackups $root $backup $keep
   "OK: $site -> $root  $homeText  (backup: $backup)"
 } finally {

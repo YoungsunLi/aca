@@ -38,6 +38,7 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
 - `aca deploy <站点> [目录或 zip] -m "<说明>"` — 按配置里该站点的服务器顺序逐台预检查、停站、备份、覆盖、启站。
   路径省略时用配置里该站点的 publish 目录。`-m` 写进服务器上的发布记录，作为这次发布的标识，
   尽量填提交范围或分支
+- `aca deploy <站点> --from-stage [--check] [-m "<说明>"]` — 直接发预发布站（配置里的 `stage`）最近一次成功发布的那个包，不用本地路径
 - `aca status <站点>` — 每台服务器上最新的文件时间和最近 5 条 aca 发布/回退记录，回答"现在跑的是哪一版"
 - `aca certs` — 登记站点所在的每台服务器上，运行中站点的每个 https 绑定实际发出的证书：实例、站点、绑定、到期日、证书名、指纹、状态。
   状态不是 `OK` 时退出码非 0：`expired`、`expires in N days`（30 天内）、`name mismatch`（证书不含这个域名，浏览器会报错）、
@@ -64,8 +65,9 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
    之后再发不带 source map 的包也清不掉它们，必须让用户确认后才能发布。
    报 `Files older than the copies on the server` 时，要么包是旧构建，要么服务器上有人手改过；让用户确认后才加 `--force`，不要自己加。
 3. 发布会让站点停机几秒到几十秒，执行前向用户确认目标和包路径。
-   配了 `stage` 的正式站要求包先在预发布站发过且是那边最后一次成功发布；
-   报 `is not the latest deploy on stage site` 时告诉用户要先发预发布站并验证，不要用 `--skip-stage` 绕过，除非用户明确要求。
+   配了 `stage` 的正式站要求包先在预发布站发过且是那边最后一次成功发布，发这种站用 `--from-stage`（`--check` 时也加上），发的就是预发布站验证过的那个包；
+   报错让先发预发布站（`deploy to the stage site`）时告诉用户要先发预发布站并验证，不要用 `--skip-stage` 绕过，除非用户明确要求；
+   `--from-stage` 报 `no longer on OSS` 时包已被 OSS 生命周期规则清理，改用本地路径发同一份构建。
 4. 每台服务器输出 `== <实例别名>` 加脚本输出，最后一行 `OK: <站点> -> <站点目录>  home <状态码> (before: <状态码>)  (backup: <path>)` 即这台服务器发布成功。
 5. 某台服务器失败时，aca 不再发后面的服务器，并以非 0 退出，已发布的服务器不会自动回退；失败的那台服务器上，脚本会重新启动站点。
    被云助手强杀（输出 `[Timeout]`）时例外：站点可能停着，也没有发布记录，文件可能只覆盖了一半。先跑 `aca rollback <站点> --check` 给用户看，

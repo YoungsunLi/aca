@@ -22,6 +22,16 @@ export async function download(cfg: Config, objectName: string): Promise<{ strea
   return { stream, versionId: versionOf(res) };
 }
 
+export async function exists(cfg: Config, objectName: string): Promise<boolean> {
+  try {
+    await new OSS(await options(cfg)).head(objectName);
+    return true;
+  } catch (e) {
+    if ((e as { status?: number }).status === 404) return false;
+    throw e;
+  }
+}
+
 export async function remove(cfg: Config, objectName: string, versionId: string | undefined) {
   // SDK 支持 versionId，类型声明里没写
   await new OSS(await options(cfg)).delete(objectName, { versionId } as OSS.RequestOptions);

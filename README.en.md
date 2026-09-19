@@ -57,7 +57,7 @@ The keys of `sites` are IIS site names; `deploy` only accepts sites registered h
 | `instances` | The servers (aliases or instance IDs) hosting the site, in deploy order |
 | `publish` | The publish directory on this machine, used when `deploy` is given no path |
 | `exclude` | Paths in the package (directories or files) that are not deployed: list where the server keeps its own secrets and environment config, and deploys won't overwrite them |
-| `stage` | Names the staging site: this site only takes the package that was the latest successful deploy on the staging site (by content hash, so a rebuild is a different package), and not once the staging site has rolled it back; `--skip-stage` skips this requirement. Both sides must use the same kind of input: both a directory, or both the same zip file |
+| `stage` | Names the staging site: this site only takes the package that was the latest successful deploy on the staging site, and not once the staging site has rolled it back; `--skip-stage` skips this requirement. `--from-stage` deploys exactly that package; given a local path, aca compares the zip it would upload, so a rebuild is a different package, and both sides must use the same kind of input: both a directory, or both the same zip file |
 | `keep` | How many backups of the site each server keeps, 5 by default; `rollback` can go back at most that many times |
 | `project`<br>`note` | Only shown by `aca sites`, to help find the right site |
 
@@ -79,7 +79,7 @@ Credentials are resolved by the Alibaba Cloud SDK's [default credential chain](h
 - **The `<root>.bak-<time>` backups and `<root>.aca-*` files next to the site directory are aca's state; don't delete them by hand**: without the latest backup, `rollback` skips that deploy and restores a mix that was never deployed.
 - **After a deploy the site and its app pool are started**, even if they had been stopped by hand.
 - **This machine and the servers must be in the same time zone**: file times in the package are stored as local time, and the check for files older than the copies on the server relies on them.
-- **Packages (`--check` uploads too) stay in OSS under `<prefix><site>/`**; aca doesn't delete them; set up a lifecycle rule on the bucket to expire them.
+- **Packages (`--check` uploads too) stay in OSS under `<prefix>`, named by their SHA-256**; aca doesn't delete them; set up a lifecycle rule on the bucket to expire them, with more days than you take from deploying to the staging site to deploying production with `--from-stage`.
 
 ## Commands
 
@@ -90,6 +90,7 @@ aca run web1 "Get-Website | select name,state"  # run any PowerShell as SYSTEM
 aca pull web1 "C:\inetpub\logs\LogFiles\W3SVC1\u_ex260919.log"  # copy a file from a server to the current directory
 aca deploy "Default Web Site" ./publish --check # pre-check only: list the files to overwrite and add, the site keeps running
 aca deploy "Default Web Site" ./publish -m "release-2026-09"  # directory or zip; -m goes into the deploy log
+aca deploy "Default Web Site" --from-stage -m "release-2026-09"  # deploy the package the staging site last deployed
 aca status "Default Web Site"                   # newest file time + last 5 deploy/rollback entries of each server
 aca certs                                       # certificates the HTTPS bindings of running sites actually serve on each server
 aca certs replace ./a.pfx --password-file ./pw.txt --check  # see which HTTPS bindings each server would switch to this certificate
@@ -120,6 +121,7 @@ aca copies a file from a server to this machine, free of the Cloud Assistant out
 On each server, aca runs: download and extract → pre-check → stop the site → back up the files about to be overwritten to `<root>.bak-<time>` → copy over → start the site → check the home page → delete backups beyond the latest `keep`.
 
 - **Deploys are incremental**: whatever is in the package gets overwritten (except `exclude`), so you can ship just a few changed files; uploads, logs and `web.config` already on the site stay untouched, and files removed from the package are not cleaned up.
+- **`--from-stage` deploys the package the staging site last deployed successfully**: aca takes that package from OSS, with no local build and no new upload; once the bucket's lifecycle rule has removed it, aca reports an error, and you deploy the same build from a local path instead.
 - **When the pre-check fails** (source code traces, a `web.config` at the package root, looks like the wrong site, not enough disk space, files older than the copies on the server), aca exits without stopping the site. Files older than the copies on the server mean an old build was picked up, or someone edited files on the server; add `-f` if you do want to overwrite them.
 - **The home page check** requests `/` over the site's http binding on the server itself; a 5xx or no connection that differs from the status before the deploy fails that server; files are not rolled back automatically. The pre-check prints the home page status before the deploy; sites with only https bindings are not checked.
 - **aca deploys the servers one at a time** and stops at the first failure; servers already deployed are not rolled back automatically.
