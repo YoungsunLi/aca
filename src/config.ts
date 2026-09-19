@@ -16,6 +16,8 @@ export type Site = {
   stage?: string;
   /** 每台服务器上为本站保留的备份份数，rollback 最多能连退这么多次 */
   keep?: number;
+  /** 站点前面的传统型负载均衡实例 ID：发布、回退每台服务器前把它在默认服务器组里的权重调成 0 */
+  clb?: string;
   note?: string;
 };
 export type Config = {
@@ -44,6 +46,7 @@ export function loadConfig(): Config {
     if (bad) throw new Error(`${file}: "${bad}" in site "${name}" is neither an alias from instances nor an instance ID`);
     if (site.stage !== undefined && (typeof site.stage !== 'string' || site.stage === name || !Object.hasOwn(sites, site.stage))) throw new Error(`${file}: stage "${site.stage}" of site "${name}" is not another site in sites`);
     if (site.keep !== undefined && !(Number.isInteger(site.keep) && site.keep > 0)) throw new Error(`${file}: keep of site "${name}" must be a positive integer`);
+    if (site.clb !== undefined && !(typeof site.clb === 'string' && site.clb.startsWith('lb-'))) throw new Error(`${file}: clb of site "${name}" must be a CLB instance ID (lb-...)`);
     if (site.exclude !== undefined) {
       if (!Array.isArray(site.exclude) || !site.exclude.every((p) => typeof p === 'string')) throw new Error(`${file}: exclude of site "${name}" must be an array of paths`);
       // 服务器端按 Windows 相对路径做前缀匹配，统一成 bin\Res 的形式；带 . 和 .. 的写法匹配不上会悄悄失效。
@@ -75,6 +78,9 @@ function newCredential() {
     }),
   });
 }
+
+/** 配置里的实例可以写别名，也可以直接写实例 ID */
+export const instanceId = (aliases: Record<string, string>, name: string) => aliases[name] ?? name;
 
 export function getSite(cfg: Config, name: string): Site {
   const site = cfg.sites[name];

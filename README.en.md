@@ -43,6 +43,7 @@ Write a config at `~/.aca/config.json`, or point the `ACA_CONFIG` environment va
       "publish": "D:\\Publish\\MyApp",
       "exclude": ["web.config", "bin/Res"],
       "stage": "Default Web Site TEST",
+      "clb": "lb-bp1zzzzzzzz",
       "note": "production"
     },
     "Default Web Site TEST": { "instances": ["web1"], "publish": "D:\\Publish\\MyApp", "exclude": ["web.config", "bin/Res"] }
@@ -59,13 +60,14 @@ The keys of `sites` are IIS site names; `deploy` only accepts sites registered h
 | `exclude` | Paths in the package (directories or files) that are not deployed: list where the server keeps its own secrets and environment config, and deploys won't overwrite them |
 | `stage` | Names the staging site: this site only takes the package that was the latest successful deploy on the staging site, and not once the staging site has rolled it back; `--skip-stage` skips this requirement. `--from-stage` deploys exactly that package; given a local path, aca compares the zip it would upload, so a rebuild is a different package, and both sides must use the same kind of input: both a directory, or both the same zip file |
 | `keep` | How many backups of the site each server keeps, 5 by default; `rollback` can go back at most that many times |
+| `clb` | ID of the Classic Load Balancer (CLB) instance in front of the site: before `deploy` or `rollback` works on each server, aca takes it out of the load balancer; see `aca deploy` |
 | `project`<br>`note` | Only shown by `aca sites`, to help find the right site |
 
 ### Credentials and permissions
 
 Credentials are resolved by the Alibaba Cloud SDK's [default credential chain](https://www.alibabacloud.com/help/en/sdk/developer-reference/v2-manage-node-js-access-credentials), shared with the Alibaba Cloud CLI: once you have run `aliyun configure` there is nothing more to set up; you can also set the environment variables `ALIBABA_CLOUD_ACCESS_KEY_ID` and `ALIBABA_CLOUD_ACCESS_KEY_SECRET`, which take precedence over `aliyun configure`.
 
-**RAM permissions**: `ecs:DescribeInstances`, `ecs:RunCommand`, `ecs:DescribeInvocationResults`, `oss:PutObject`, `oss:GetObject`, plus `oss:DeleteObject` for `pull` and `certs replace` to delete the files they pass through OSS (`oss:DeleteObjectVersion` on a versioned bucket).
+**RAM permissions**: `ecs:DescribeInstances`, `ecs:RunCommand`, `ecs:DescribeInvocationResults`, `oss:PutObject`, `oss:GetObject`, plus `oss:DeleteObject` for `pull` and `certs replace` to delete the files they pass through OSS (`oss:DeleteObjectVersion` on a versioned bucket), and `slb:DescribeLoadBalancerAttribute`, `slb:DescribeLoadBalancerListeners`, `slb:DescribeHealthStatus` and `slb:SetBackendServers` for sites with `clb`.
 
 > [!WARNING]
 > Cloud Assistant runs scripts as SYSTEM: whoever holds this AccessKey, human or agent, is an administrator of every instance `ecs:RunCommand` is granted on. Grant it per instance ID, never `*`.
@@ -97,6 +99,8 @@ aca certs replace ./a.pfx --password-file ./pw.txt --check  # see which HTTPS bi
 aca certs replace ./a.pfx --password-file ./pw.txt  # switch them
 aca rollback "Default Web Site" --check         # see which deploy each server would roll back
 aca rollback "Default Web Site"                 # roll back the latest deploy
+aca clb "Default Web Site"                      # weight of each server in the CLB
+aca clb restore "Default Web Site" web1         # put web1, taken out earlier, back into the load balancer
 ```
 
 ### `aca run`
@@ -125,6 +129,13 @@ On each server, aca runs: download and extract → pre-check → stop the site �
 - **When the pre-check fails** (source code traces, a `web.config` at the package root, looks like the wrong site, not enough disk space, files older than the copies on the server), aca exits without stopping the site. Files older than the copies on the server mean an old build was picked up, or someone edited files on the server; add `-f` if you do want to overwrite them.
 - **The home page check** requests `/` over the site's http binding on the server itself; a 5xx or no connection that differs from the status before the deploy fails that server; files are not rolled back automatically. The pre-check prints the home page status before the deploy; sites with only https bindings are not checked.
 - **aca deploys the servers one at a time** and stops at the first failure; servers already deployed are not rolled back automatically.
+- **For a site with `clb`, aca takes each server out of the load balancer before deploying to it**: it sets the server's weight in the CLB default server group to 0, so the CLB sends it no requests while the site is stopped; once the server deploys successfully, aca restores the weight and moves on to the next one.
+  - **aca only takes a server out while another server in the default server group is taking traffic** (weight above 0, every enabled health check normal): when every other server has weight 0, aca reports an error and stops right away; when some have weight but their health checks haven't recovered yet, it waits up to 5 minutes.
+  - **aca leaves a server whose weight is already 0 as it is**, and deploys to it as usual.
+  - **A server that fails after its site was stopped stays out of the load balancer**: the CLB health check may not probe this site, so putting it back could send users to a site that didn't start or was broken by the deploy. A server that fails the pre-check hasn't stopped its site, and aca puts it back.
+  - **Only the default server group is handled**: for a site whose traffic goes through a VServer group via forwarding rules, taking servers out of the default server group does nothing.
+  - **Weights only affect new connections**: layer-7 (HTTP/HTTPS) listeners open a new connection to the server for every request, so they are not affected; connections already established through layer-4 (TCP/UDP) listeners stay on the server and break when its site stops.
+  - **aca doesn't coordinate `deploy` and `rollback` operations running on the same CLB at once**: when two of them work on the same server (two sites on it, for example), the one that finishes first puts the server back into the load balancer while the other site may still be stopped; when the only two servers taking traffic in the default server group are taken out at the same time, the aca that finds no server left serving on its re-check puts its own back, but for a few seconds neither takes traffic.
 - **Only one `deploy` or `rollback` at a time can change a site on a server**; the other one reports `Another aca operation is modifying this site`.
   - The lock is an exclusive handle on `<root>.aca-lock` next to the site directory, released when the script ends or is killed; the file staying around doesn't mean anyone holds it.
   - **Locks are per server**: two people deploying the same site on several servers at once may each get to different servers; compare the servers with `aca status` afterwards.
@@ -139,9 +150,17 @@ Whether you undo this deploy or fix it and deploy again, first run `aca rollback
 > [!WARNING]
 > If you deploy again without rolling back first, the servers that got this deploy back up its files, so a rollback afterwards only takes them back to this deploy, not to the version before it.
 
+**When the output has `WARN: <instance> stays out of CLB`**, that server was left out of the load balancer, and neither a rollback nor a new deploy puts it back: once its sites work, put it back with `aca clb restore <site> <instance>`.
+
 ### `aca rollback`
 
-Restores the latest backup, deletes the files that deploy added, restarts the site, then deletes that backup; rolling back again goes to the deploy before it.
+aca restores the latest backup, deletes the files that deploy added, restarts the site, then deletes that backup; rolling back again goes to the deploy before it. For a site with `clb`, aca takes each server out of the load balancer before rolling it back, just as for a deploy, and rolls back servers already left out first; when taking out the next one would leave no server taking traffic, aca reports an error and stops: put the rolled-back server back with `aca clb restore`, then roll back again.
+
+### `aca clb`
+
+Run `aca clb <site>` to list the weight of each server of the site in the default server group of its CLB, with the original weight noted for any server aca took out and hasn't put back; run `aca clb restore <site> <instance>` to set that server's weight back to the original.
+
+- **The original weight is recorded on this machine under `~/.aca/clb/`**: aca records it before taking a server out and deletes it once the server is back. On another machine, or for a server aca didn't take out, there is no record, so give the weight with `--weight`.
 
 ### `aca certs`
 
@@ -170,6 +189,8 @@ On the same servers, aca switches every HTTPS binding that uses a certificate wi
   ```sh
   aca run <instance> "Start-WebAppPool (Get-Website '<site>').applicationPool; Start-Website '<site>'"
   ```
+
+- **For a site with `clb`, in both cases above the server being worked on stays out of the load balancer**, and the output has `WARN: <instance> stays out of CLB`; see "After a failed deploy". If aca itself is stopped halfway (Ctrl+C, for example), the server stays out too, just without that WARN line; put it back with `aca clb restore` all the same.
 
 ## Disclaimer
 

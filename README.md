@@ -43,6 +43,7 @@ aca skill install  # 给 Claude Code、Codex 装上 skill，升级 aca 后再跑
       "publish": "D:\\Publish\\MyApp",
       "exclude": ["web.config", "bin/Res"],
       "stage": "Default Web Site TEST",
+      "clb": "lb-bp1zzzzzzzz",
       "note": "正式站"
     },
     "Default Web Site TEST": { "instances": ["web1"], "publish": "D:\\Publish\\MyApp", "exclude": ["web.config", "bin/Res"] }
@@ -59,13 +60,14 @@ aca skill install  # 给 Claude Code、Codex 装上 skill，升级 aca 后再跑
 | `exclude` | 包里不发布的路径（目录或文件）：服务器上自己维护的密钥、环境配置，把路径列在这里，发布就不会覆盖它们 |
 | `stage` | 指向预发布站：发本站时，包必须是预发布站最近一次成功发布的同一份，预发布回退过也不算，`--skip-stage` 跳过这项要求。用 `--from-stage` 发的就是那一份；给本机路径时比对要上传的 zip，重新构建就不算同一份，两边还要用同一种输入：都给目录，或都给同一个 zip 文件 |
 | `keep` | 每台服务器上为这个站点保留的备份份数，默认 5，`rollback` 最多连退这么多次 |
+| `clb` | 站点前面的传统型负载均衡（CLB）实例 ID：`deploy`、`rollback` 处理每台服务器前，aca 先把它摘出负载均衡，见 `aca deploy` 一节 |
 | `project`<br>`note` | 只在 `aca sites` 里显示，方便认出是哪个站点 |
 
 ### 凭证和权限
 
 凭证按阿里云 SDK 的[默认凭证链](https://help.aliyun.com/zh/sdk/developer-reference/v2-manage-node-js-access-credentials)查找，和阿里云 CLI 共用：`aliyun configure` 配过就不用再配，也可以设环境变量 `ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET`，两处都配了时环境变量优先。
 
-**RAM 权限**：`ecs:DescribeInstances`、`ecs:RunCommand`、`ecs:DescribeInvocationResults`、`oss:PutObject`、`oss:GetObject`，`pull` 和 `certs replace` 删 OSS 上中转的文件还要 `oss:DeleteObject`（bucket 开了版本控制是 `oss:DeleteObjectVersion`）。
+**RAM 权限**：`ecs:DescribeInstances`、`ecs:RunCommand`、`ecs:DescribeInvocationResults`、`oss:PutObject`、`oss:GetObject`，`pull` 和 `certs replace` 删 OSS 上中转的文件还要 `oss:DeleteObject`（bucket 开了版本控制是 `oss:DeleteObjectVersion`），站点配了 `clb` 还要 `slb:DescribeLoadBalancerAttribute`、`slb:DescribeLoadBalancerListeners`、`slb:DescribeHealthStatus`、`slb:SetBackendServers`。
 
 > [!WARNING]
 > 云助手以 SYSTEM 身份执行脚本，`ecs:RunCommand` 授权到哪些实例，持有这份 AccessKey 的人和 Agent 就是哪些实例的管理员，按实例 ID 授权，不要给 `*`。
@@ -97,6 +99,8 @@ aca certs replace ./a.pfx --password-file ./pw.txt --check  # 看每台服务器
 aca certs replace ./a.pfx --password-file ./pw.txt  # 换证书
 aca rollback "Default Web Site" --check         # 看每台服务器会撤掉哪次发布
 aca rollback "Default Web Site"                 # 回退最近一次发布
+aca clb "Default Web Site"                      # 每台服务器在 CLB 里的权重
+aca clb restore "Default Web Site" web1         # 把摘下的 web1 放回负载均衡
 ```
 
 ### `aca run`
@@ -125,6 +129,13 @@ aca 在每台服务器上依次执行：下载解压 → 预检查 → 停站 �
 - **预检查不过**（源码痕迹、包根目录的 `web.config`、疑似发错站点、磁盘不足、包里有比服务器更旧的文件）aca 就不停站直接退出。"比服务器旧"意味着拿错了旧构建，或者服务器上有人手改过；确认要覆盖就加 `-f`。
 - **首页检查**在服务器本机按站点的 http 绑定请求 `/`，5xx 或连不上、且和发布前的状态不同，就算这台服务器发布失败，文件不自动回退。预检查会打印发布前的首页状态；只有 https 绑定的站点不检查。
 - **站点有多台服务器时，aca 发完一台再发下一台**，一台失败就停止，已发布的服务器不会自动回退。
+- **站点配了 `clb` 时，aca 发每台服务器之前先把它摘出负载均衡**：CLB 默认服务器组里的权重调成 0，停站期间 CLB 不再把请求转给它；这台服务器发布成功后调回原值，再发下一台。
+  - **默认服务器组里还有别的服务器在接流量**（权重不为 0，开了的健康检查都正常）aca 才摘：别的服务器权重都是 0 时直接报错停下，有权重但健康检查还没恢复时最多等 5 分钟。
+  - **权重本来就是 0 的服务器，aca 不摘也不放回**，照常发布。
+  - **停过站又失败的服务器留在负载均衡外**：CLB 的健康检查查的不一定是这个站点，放回去用户可能撞上没起来或发坏了的站点。预检查没过的服务器还没停站，aca 直接放回。
+  - **只管默认服务器组**：站点经转发规则走虚拟服务器组时，摘默认服务器组没有用。
+  - **权重只管新连接**：七层（HTTP/HTTPS）监听每个请求都新建到服务器的连接，不受影响；四层（TCP/UDP）监听上已经建立的连接会一直连到这台服务器，停站时断开。
+  - **同一个 CLB 上同时进行的几个 `deploy`、`rollback` 之间 aca 不协调**：同时处理同一台服务器时（比如这台服务器上的两个站点），先结束的会把服务器放回负载均衡，另一个站点可能还停着；默认服务器组里只剩两台在接流量时同时摘这两台，摘完复查发现没有服务器接流量的那个 aca 会把自己摘的放回，但中间有几秒两台都不接流量。
 - **同一台服务器上的同一站点同时只有一个 `deploy` 或 `rollback` 能改文件**，撞上的那个报 `Another aca operation is modifying this site`。
   - 加锁的方式是独占打开站点目录旁的 `<root>.aca-lock`，脚本结束或被强杀都会释放锁；文件留着不代表有人在改。
   - **锁是每台服务器各管各的**：两个人同时发同一个跑在多台服务器上的站点，可能各自发到不同服务器上，事后用 `aca status` 核对每台服务器的版本。
@@ -139,9 +150,17 @@ aca 在每台服务器上依次执行：下载解压 → 预检查 → 停站 �
 > [!WARNING]
 > 发上了这次的服务器不先回退就重发，会把这次的版本当作备份，之后回退一次只能退到这次，退不回发布前的版本。
 
+**输出里有 `WARN: <实例> stays out of CLB` 时**，这台服务器留在了负载均衡外，回退和重发都不会放回它：确认它上面的站点正常后，用 `aca clb restore <站点> <实例>` 放回。
+
 ### `aca rollback`
 
-aca 恢复最近一次备份、删除那次新增的文件、重启站点，然后删掉这个备份；再回退一次就退到更早一次发布。
+aca 恢复最近一次备份、删除那次新增的文件、重启站点，然后删掉这个备份；再回退一次就退到更早一次发布。站点配了 `clb` 时，回退每台服务器也和发布一样先摘出负载均衡，已经留在外面的服务器先回退；再摘一台就没有服务器接流量时 aca 报错停下，把回退好的服务器用 `aca clb restore` 放回后再回退一次。
+
+### `aca clb`
+
+用 `aca clb <站点>` 看站点每台服务器在 CLB 默认服务器组里的权重，aca 摘下后没放回的会注明原来的权重；用 `aca clb restore <站点> <实例>` 把这台服务器的权重调回原来的值。
+
+- **原来的权重记在本机 `~/.aca/clb/`**：aca 摘服务器之前记下，放回后删掉。换一台机器，或者服务器不是 aca 摘的，没有记录可用，要用 `--weight` 给出权重。
 
 ### `aca certs`
 
@@ -170,6 +189,8 @@ aca 在同一批服务器上，把正在用同名证书（按证书使用者名�
   ```sh
   aca run <实例> "Start-WebAppPool (Get-Website '<站点>').applicationPool; Start-Website '<站点>'"
   ```
+
+- **配了 `clb` 的站点，以上两种情况下正在处理的服务器都留在负载均衡外**，输出里有 `WARN: <实例> stays out of CLB`，处理办法见"发布失败后"。aca 被中途终止（比如 Ctrl+C）时也留在外面，只是没有这行 WARN，同样用 `aca clb restore` 放回。
 
 ## 免责声明
 

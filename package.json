@@ -37,6 +37,7 @@
     "@alicloud/credentials": "^2.4.7",
     "@alicloud/ecs20140526": "^7.11.1",
     "@alicloud/openapi-client": "^0.4.15",
+    "@alicloud/slb20140515": "^2.0.12",
     "ali-oss": "^6.23.0",
     "archiver": "^8.0.0",
     "commander": "^15.0.0"

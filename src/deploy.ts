@@ -4,6 +4,7 @@ import { copyFileSync, createReadStream, createWriteStream, readdirSync, readFil
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ZipArchive } from 'archiver';
+import { clbOf, outOfClb } from './clb.ts';
 import { type Config, getSite } from './config.ts';
 import { Ecs, type RunResult } from './ecs.ts';
 import { exists, signForEcs, upload } from './oss.ts';
@@ -22,6 +23,8 @@ export async function* deploy(cfg: Config, site: string, path: string | undefine
   const { instances, publish, exclude = [], stage, keep = 5 } = getSite(cfg, site);
   const deployId = new Date().toISOString().replace(/[-:]|\.\d+/g, '');
   const ecs = new Ecs(cfg);
+  const clb = clbOf(cfg, site);
+  await clb?.check(instances);
   let pkg: Package;
   if (fromStage) {
     if (!stage) throw new Error(`Site ${site} has no stage site in the config`);
@@ -38,13 +41,13 @@ export async function* deploy(cfg: Config, site: string, path: string | undefine
 
   const timeout = 1800;
   for (const [i, name] of instances.entries()) {
-    // 每台服务器现签一个链接，有效期同这台的运行时限：STS 类凭证签出的链接随 token 失效，整批共用一个，排在后面的服务器会下载失败
+    // 每台服务器现签一个链接，有效期同这台的运行时限：STS 类凭证签出的链接随 token 失效，整批共用一个，排在后面的服务器会下载失败。
+    // 签在摘出负载均衡之前，签名出错时这台服务器还没被摘
     const script = renderScript('deploy', {
       SITE: site, URL: await signForEcs(cfg, object, timeout), SHA256: pkg.sha256, DEPLOY_ID: deployId, PACKAGE: pkg.id, MESSAGE: message,
       CHECK_ONLY: String(check), FORCE: String(force), EXCLUDE: exclude.join('\n'), KEEP: String(keep),
     });
-    const r = await ecs.runPowerShell(name, script, timeout);
-    yield [name, r];
+    const r = yield* outOfClb(check ? undefined : clb, name, () => ecs.runPowerShell(name, script, timeout));
     if (r.status !== 'Success') throw new Error(`${name}: ${check ? 'pre-check' : 'deploy'} failed, ${instances.length - i - 1} remaining server(s) not processed`);
   }
 }

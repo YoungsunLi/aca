@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import $Ecs from '@alicloud/ecs20140526';
 import $OpenApi from '@alicloud/openapi-client';
-import type { Config } from './config.ts';
+import { type Config, instanceId } from './config.ts';
 
 export type Instance = { id: string; name: string; status: string; os: string; publicIp: string; privateIp: string };
 /** dropped：输出超过云助手上限被丢掉的字节数 */
@@ -53,7 +53,7 @@ export class Ecs {
       type: 'RunPowerShellScript',
       contentEncoding: 'Base64',
       commandContent: Buffer.from(PS_PREAMBLE + script).toString('base64'),
-      instanceId: [this.#aliases[instance] ?? instance],
+      instanceId: [instanceId(this.#aliases, instance)],
       timeout: timeoutSec,
     }));
     // 云助手到时会强杀脚本并置 Timeout，本地再多等一分钟兜底，避免状态没更新时死等

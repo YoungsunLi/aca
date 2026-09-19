@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { checkCerts, replaceCert, type ReplaceOptions } from './certs.ts';
+import { isWeight, siteClb } from './clb.ts';
 import { getSite, loadConfig } from './config.ts';
 import { deploy, type DeployOptions } from './deploy.ts';
 import { Ecs, type RunResult } from './ecs.ts';
@@ -94,6 +95,20 @@ program.command('rollback <site>').description('Roll back the latest deploy of a
         : `no backup of deploy ${plan.deployId}, skipped`}`);
     }
     if (!opts.check) await reportEach(rollback(cfg, plan));
+  });
+
+const clb = program.command('clb <site>').description('Show the weight of each server of the site in the default server group of its CLB')
+  .action(async (site: string) => {
+    const cfg = loadConfig();
+    await siteClb(cfg, site).check(getSite(cfg, site).instances);
+  });
+
+clb.command('restore <site> <instance>').description('Put a server back into the CLB of the site with the weight aca recorded on this machine when taking it out, or with --weight')
+  .option('--weight <n>', 'weight from 1 to 100, for a server aca has no record of')
+  .action(async (site: string, instance: string, opts: { weight?: string }) => {
+    const weight = opts.weight === undefined ? undefined : Number(opts.weight);
+    if (weight !== undefined && !isWeight(weight)) throw new Error(`--weight must be an integer from 1 to 100, got "${opts.weight}"`);
+    await siteClb(loadConfig(), site).restore(instance, weight);
   });
 
 program.command('skill').description('Agent Skill that lets Claude Code, Codex and other agents use aca')

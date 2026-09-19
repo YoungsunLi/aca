@@ -1,3 +1,4 @@
+import { clbOf, outOfClb } from './clb.ts';
 import { type Config, getSite } from './config.ts';
 import { Ecs, type RunResult } from './ecs.ts';
 import { renderScript } from './ps.ts';
@@ -32,10 +33,14 @@ export async function planRollback(cfg: Config, site: string): Promise<RollbackP
 
 export async function* rollback(cfg: Config, plan: RollbackPlan): AsyncGenerator<[string, RunResult]> {
   const ecs = new Ecs(cfg);
-  for (const { name, backup } of plan.steps) {
-    if (!backup) continue;
-    const r = await ecs.runPowerShell(name, renderScript('rollback', { SITE: plan.site, BACKUP: backup.dir }), 600);
-    yield [name, r];
+  const clb = clbOf(cfg, plan.site);
+  const steps = plan.steps.filter((s) => s.backup);
+  const weights = await clb?.check(steps.map((s) => s.name));
+  // 已经留在负载均衡外的先回退：两台服务器的站点发坏一台时，先回退另一台会因为摘了它就没人接流量而报错停下
+  steps.sort((a, b) => Number(weights?.get(b.name) === 0) - Number(weights?.get(a.name) === 0));
+  for (const { name, backup } of steps) {
+    const script = renderScript('rollback', { SITE: plan.site, BACKUP: backup!.dir });
+    const r = yield* outOfClb(clb, name, () => ecs.runPowerShell(name, script, 600));
     if (r.status !== 'Success') throw new Error(`${name}: rollback failed`);
   }
 }

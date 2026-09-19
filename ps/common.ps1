@@ -52,6 +52,8 @@ function Copy-AcaFile($src, $dst) {
   Copy-Item -LiteralPath $src -Destination $dst -Force
 }
 function Stop-AcaSite($web) {
+  # clb.ts 靠这一行判断失败时停没停过站：停过的服务器留在负载均衡外
+  "Stopping site $($web.name)"
   if ($web.State -ne 'Stopped') { Stop-Website -Name $web.name }
   $pool = $web.applicationPool
   if ((Get-WebAppPoolState -Name $pool).Value -ne 'Stopped') { Stop-WebAppPool -Name $pool }
@@ -102,7 +104,8 @@ function Format-AcaHome($code) { switch ($code) { -1 { 'no http binding' } 0 { '
 # 有的站首页本来就是 500（如只有 API 的站），发布前后一样就不算这次发布弄坏的
 function Test-AcaHomeBroken($code, $before) { ($code -eq 0 -or $code -ge 500) -and $code -ne $before }
 # 两个 aca 同时改一个站（或一台服务器的证书）会交错停站、互相覆盖。锁是独占打开 <path>.aca-lock，握着句柄直到脚本结束；
-# 被云助手强杀时句柄随进程释放，不会留下死锁，文件本身留着无妨。调用方在 finally 里 Close
+# 被云助手强杀时句柄随进程释放，不会留下死锁，文件本身留着无妨。调用方在 finally 里 Close。
+# clb.ts 认默认的报错原文：锁被占时不把服务器放回负载均衡
 function Lock-Aca($path, $busy = 'Another aca operation is modifying this site; retry after it finishes') {
   try { [IO.File]::Open("$path.aca-lock", 'OpenOrCreate', 'ReadWrite', 'None') } catch {
     $e = $_.Exception.InnerException
