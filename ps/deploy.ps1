@@ -58,6 +58,9 @@ try {
   "$site -> $root  $($rels.Count) files in package: $($rels.Count - $added.Count) to overwrite, $($added.Count) new"
   $addedDll = @($added | Where-Object { $_ -match '\.dll$' })
   if ($addedDll) { "New DLLs (not on the site yet; either new dependencies or the wrong site): $(($addedDll | Select-Object -First 20) -join ', ')" }
+  # 只提示不拦：有的站点本来就要发 source map
+  $maps = @($rels | Where-Object { $_ -match '\.map$' })
+  if ($maps) { "Source maps in package, which can reveal the original source: $(($maps | Select-Object -First 20) -join ', ')" }
   if ($added) { "New files: $(($added | Select-Object -First 20) -join ', ')" }
   $newest = $files | Sort-Object LastWriteTime -Descending | Select-Object -First 1
   "Newest file in package: $($newest.FullName.Substring($new.Length + 1))  $($newest.LastWriteTime.ToString('yyyy-MM-dd HH:mm'))"
