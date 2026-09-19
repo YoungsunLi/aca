@@ -1,7 +1,8 @@
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-Import-Module WebAdministration
+# 没装 IIS 的服务器（如数据库服务器）上 pull 也要能跑，别的脚本在那里会报找不到 Get-Website 之类的命令
+Import-Module WebAdministration -ErrorAction SilentlyContinue
 
 function Get-AcaSite($name) {
   $web = Get-Website -Name $name

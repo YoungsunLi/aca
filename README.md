@@ -65,7 +65,7 @@ aca skill install  # 给 Claude Code、Codex 装上 skill，升级 aca 后再跑
 
 凭证按阿里云 SDK 的[默认凭证链](https://help.aliyun.com/zh/sdk/developer-reference/v2-manage-node-js-access-credentials)查找，和阿里云 CLI 共用：`aliyun configure` 配过就不用再配，也可以设环境变量 `ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET`，两处都配了时环境变量优先。
 
-**RAM 权限**：`ecs:DescribeInstances`、`ecs:RunCommand`、`ecs:DescribeInvocationResults`、`oss:PutObject`、`oss:GetObject`，`certs replace` 删上传的 PFX 还要 `oss:DeleteObject`（bucket 开了版本控制是 `oss:DeleteObjectVersion`）。
+**RAM 权限**：`ecs:DescribeInstances`、`ecs:RunCommand`、`ecs:DescribeInvocationResults`、`oss:PutObject`、`oss:GetObject`，`pull` 和 `certs replace` 删 OSS 上中转的文件还要 `oss:DeleteObject`（bucket 开了版本控制是 `oss:DeleteObjectVersion`）。
 
 > [!WARNING]
 > 云助手以 SYSTEM 身份执行脚本，`ecs:RunCommand` 授权到哪些实例，持有这份 AccessKey 的人和 Agent 就是哪些实例的管理员，按实例 ID 授权，不要给 `*`。
@@ -87,6 +87,7 @@ aca skill install  # 给 Claude Code、Codex 装上 skill，升级 aca 后再跑
 aca instances                                   # 列出实例
 aca sites                                       # 列出站点与项目、发布目录、实例的映射
 aca run web1 "Get-Website | select name,state"  # 以 SYSTEM 执行任意 PowerShell
+aca pull web1 "C:\inetpub\logs\LogFiles\W3SVC1\u_ex260919.log"  # 把服务器上的文件拉到本机当前目录
 aca deploy "Default Web Site" ./publish --check # 只预检查，打印将覆盖/新增的文件，不停站
 aca deploy "Default Web Site" ./publish -m "release-2026-09"  # 目录或 zip；-m 写进发布记录
 aca status "Default Web Site"                   # 每台服务器上最新的文件时间和最近 5 条发布/回退记录
@@ -104,8 +105,15 @@ aca 以 SYSTEM 身份在服务器上执行任意 PowerShell，结束后打印输
 - **适合查日志、看磁盘、重启应用池这类临时运维**，实例可以写配置里的别名，也可以写当前地域的任意实例 ID。
 - **`-t` 指定超时秒数**，到点强杀（默认 300）。
 - **PowerShell 默认出错的命令只报错不中止**，退出码仍是 0；要让任何错误都算失败，脚本开头加 `$ErrorActionPreference = 'Stop'`。
-- **脚本连同 aca 加的前缀 base64 后不能超过 24 KB**（纯英文约 18 KB）；输出超过云助手上限会被截断，aca 会提示丢了多少字节，大的输出先在脚本里筛过。
+- **脚本连同 aca 加的前缀 base64 后不能超过 24 KB**（纯英文约 18 KB）；输出超过云助手上限会被截断，aca 会提示丢了多少字节，大的输出先在脚本里筛过；要看整个文件用 `aca pull`。
 - **改站点文件请用 `aca deploy`**：用 `aca run` 改的东西没有备份，`aca rollback` 管不了。
+
+### `aca pull`
+
+aca 把服务器上的一个文件拉到本机，不受云助手输出上限的限制，适合看完整的日志（正在写的也能拉）、比对每台服务器的 `web.config`。
+
+- **本地路径默认是当前目录下的同名文件**，给的是已有目录就放进这个目录；本机已有这个文件时 aca 报错，不覆盖。
+- **文件经 OSS 中转**：服务器用 aca 这次生成的一次性密钥加密后上传，aca 下载解密后就删掉 OSS 上的这份；密钥留在云助手的执行记录里。
 
 ### `aca deploy`
 

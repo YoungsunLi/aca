@@ -65,7 +65,7 @@ The keys of `sites` are IIS site names; `deploy` only accepts sites registered h
 
 Credentials are resolved by the Alibaba Cloud SDK's [default credential chain](https://www.alibabacloud.com/help/en/sdk/developer-reference/v2-manage-node-js-access-credentials), shared with the Alibaba Cloud CLI: once you have run `aliyun configure` there is nothing more to set up; you can also set the environment variables `ALIBABA_CLOUD_ACCESS_KEY_ID` and `ALIBABA_CLOUD_ACCESS_KEY_SECRET`, which take precedence over `aliyun configure`.
 
-**RAM permissions**: `ecs:DescribeInstances`, `ecs:RunCommand`, `ecs:DescribeInvocationResults`, `oss:PutObject`, `oss:GetObject`, plus `oss:DeleteObject` for `certs replace` to delete the PFX it uploads (`oss:DeleteObjectVersion` on a versioned bucket).
+**RAM permissions**: `ecs:DescribeInstances`, `ecs:RunCommand`, `ecs:DescribeInvocationResults`, `oss:PutObject`, `oss:GetObject`, plus `oss:DeleteObject` for `pull` and `certs replace` to delete the files they pass through OSS (`oss:DeleteObjectVersion` on a versioned bucket).
 
 > [!WARNING]
 > Cloud Assistant runs scripts as SYSTEM: whoever holds this AccessKey, human or agent, is an administrator of every instance `ecs:RunCommand` is granted on. Grant it per instance ID, never `*`.
@@ -87,6 +87,7 @@ Credentials are resolved by the Alibaba Cloud SDK's [default credential chain](h
 aca instances                                   # list instances
 aca sites                                       # list sites with their project, publish directory and instances
 aca run web1 "Get-Website | select name,state"  # run any PowerShell as SYSTEM
+aca pull web1 "C:\inetpub\logs\LogFiles\W3SVC1\u_ex260919.log"  # copy a file from a server to the current directory
 aca deploy "Default Web Site" ./publish --check # pre-check only: list the files to overwrite and add, the site keeps running
 aca deploy "Default Web Site" ./publish -m "release-2026-09"  # directory or zip; -m goes into the deploy log
 aca status "Default Web Site"                   # newest file time + last 5 deploy/rollback entries of each server
@@ -104,8 +105,15 @@ aca runs any PowerShell on the server as SYSTEM and prints the output when it fi
 - **Handy for ad-hoc operations** such as reading logs, checking disk space or restarting an app pool; the instance can be an alias from the config or any instance ID in the configured region.
 - **`-t` kills the script after this many seconds** (default 300).
 - **By default a failing PowerShell command only reports an error** and the exit code stays 0; start the script with `$ErrorActionPreference = 'Stop'` to make any error a failure.
-- **The script plus the prefix aca adds must fit in 24 KB after base64** (about 18 KB of plain English text); output beyond the Cloud Assistant limit is cut off and aca reports how many bytes were dropped, so filter large output in the script.
+- **The script plus the prefix aca adds must fit in 24 KB after base64** (about 18 KB of plain English text); output beyond the Cloud Assistant limit is cut off and aca reports how many bytes were dropped, so filter large output in the script; to read a whole file, use `aca pull`.
 - **Change site files with `aca deploy`**: whatever you change with `aca run` has no backup, and `aca rollback` can't undo it.
+
+### `aca pull`
+
+aca copies a file from a server to this machine, free of the Cloud Assistant output limit: read a whole log (even one still being written) or compare `web.config` across servers.
+
+- **The local path defaults to a file of the same name in the current directory**; given an existing directory, the file goes into it. If the local file already exists, aca refuses to overwrite it.
+- **The file goes through OSS**: the server encrypts it with a one-time key aca generates for this pull before uploading; aca downloads and decrypts it, then deletes it from OSS. The key stays in the Cloud Assistant invocation history.
 
 ### `aca deploy`
 

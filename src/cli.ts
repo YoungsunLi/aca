@@ -8,6 +8,7 @@ import { getSite, loadConfig } from './config.ts';
 import { deploy, type DeployOptions } from './deploy.ts';
 import { Ecs, type RunResult } from './ecs.ts';
 import { renderScript } from './ps.ts';
+import { pull } from './pull.ts';
 import { planRollback, rollback } from './rollback.ts';
 
 const program = new Command('aca').description('Run PowerShell on Windows ECS instances and deploy or roll back IIS sites through Alibaba Cloud Cloud Assistant')
@@ -34,6 +35,13 @@ program.command('run <instance> <script>').description('Run PowerShell on a serv
     if (!Number.isInteger(timeout) || timeout <= 0) throw new Error(`--timeout must be a positive integer of seconds, got "${opts.timeout}"`);
     // 放进子作用域：否则前缀里兜底的 trap 会抢在用户自己的 trap 之前接住异常
     report(await new Ecs(loadConfig()).runPowerShell(instance, `& {\n${script}\n}`, timeout));
+  });
+
+program.command('pull <instance> <file> [local]').description('Copy a file from a server (instance ID or alias from the config) to this machine through OSS, free of the Cloud Assistant output limit; local defaults to the current directory, and an existing local file is never overwritten')
+  .action(async (instance: string, file: string, local = '.') => {
+    const { result, saved } = await pull(loadConfig(), instance, file, local);
+    report(result);
+    if (saved) console.log(`Saved ${saved}`);
   });
 
 program.command('deploy <site> [path]').description('Deploy a directory or zip to a configured IIS site, one server at a time; path defaults to the site\'s publish directory')
