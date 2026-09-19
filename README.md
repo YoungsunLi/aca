@@ -90,6 +90,7 @@ aca run web1 "Get-Website | select name,state"  # 以 SYSTEM 执行任意 PowerS
 aca deploy "Default Web Site" ./publish --check # 只预检查，打印将覆盖/新增的文件，不停站
 aca deploy "Default Web Site" ./publish -m "release-2026-09"  # 目录或 zip；-m 写进发布记录
 aca status "Default Web Site"                   # 每台服务器上最新的文件时间和最近 5 条发布/回退记录
+aca certs                                       # 每台服务器上运行中站点的 https 绑定实际发出的证书
 aca rollback "Default Web Site" --check         # 看每台服务器会撤掉哪次发布
 aca rollback "Default Web Site"                 # 回退最近一次发布
 ```
@@ -129,6 +130,13 @@ aca 在每台服务器上依次执行：下载解压 → 预检查 → 停站 �
 ### `aca rollback`
 
 aca 恢复最近一次备份、删除那次新增的文件、重启站点，然后删掉这个备份；再回退一次就退到更早一次发布。
+
+### `aca certs`
+
+aca 在登记站点所在的每台服务器上，按每个运行中站点的 https 绑定在服务器本机握手，列出实际发出的证书；没登记的站点也查，停止的站点不查。
+
+- **退出码**：证书过期、30 天内到期、不含绑定的域名（`*.a.com` 管不到 `x.y.a.com`）或握手失败时以非 0 退出，可以放进计划任务定期跑。
+- **看的是握手结果而不是 IIS 里的配置**：SNI 绑定用的证书被删掉后，http.sys 改发同端口不带 SNI 的绑定的证书，没有就断开连接，IIS 里显示的还是原来那张。
 
 ## 轮询失败或超时
 
