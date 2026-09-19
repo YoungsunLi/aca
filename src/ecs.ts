@@ -2,6 +2,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import $Ecs from '@alicloud/ecs20140526';
 import $OpenApi from '@alicloud/openapi-client';
 import { type Config, instanceId } from './config.ts';
+import type { Lease } from './lease.ts';
 
 export type Instance = { id: string; name: string; status: string; os: string; publicIp: string; privateIp: string };
 /** dropped：输出超过云助手上限被丢掉的字节数 */
@@ -19,10 +20,14 @@ export class Ecs {
   #client: InstanceType<typeof $Ecs.default>;
   #region: string;
   #aliases: Record<string, string>;
+  #credential: Config['credential'];
+  #held?: Lease;
 
-  constructor({ region, credential, instances }: Config) {
+  constructor({ region, credential, instances }: Config, held?: Lease) {
     this.#region = region;
     this.#aliases = instances;
+    this.#credential = credential;
+    this.#held = held;
     this.#client = new $Ecs.default(new $OpenApi.Config({ credential, endpoint: `ecs.${region}.aliyuncs.com` }));
   }
 
@@ -46,9 +51,16 @@ export class Ecs {
     return result;
   }
 
-  /** instance 可以是实例 ID，也可以是配置里的别名 */
+  /**
+   * instance 可以是实例 ID，也可以是配置里的别名。
+   * 发命令前查一遍租约；凭证先取到手再交给这一次的客户端，SDK 就不会在查完之后又去刷一次：
+   * 刷新要走网络、超时管不到它，命令就可能在别人接手租约之后才发出去
+   */
   async runPowerShell(instance: string, script: string, timeoutSec: number): Promise<RunResult> {
-    const { body } = await this.#client.runCommand(new $Ecs.RunCommandRequest({
+    const { accessKeyId, accessKeySecret, securityToken } = await this.#credential.getCredential();
+    this.#held?.check();
+    const client = new $Ecs.default(new $OpenApi.Config({ accessKeyId, accessKeySecret, securityToken, endpoint: `ecs.${this.#region}.aliyuncs.com` }));
+    const { body } = await client.runCommand(new $Ecs.RunCommandRequest({
       regionId: this.#region,
       type: 'RunPowerShellScript',
       contentEncoding: 'Base64',

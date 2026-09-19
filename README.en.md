@@ -67,7 +67,7 @@ The keys of `sites` are IIS site names; `deploy` only accepts sites registered h
 
 Credentials are resolved by the Alibaba Cloud SDK's [default credential chain](https://www.alibabacloud.com/help/en/sdk/developer-reference/v2-manage-node-js-access-credentials), shared with the Alibaba Cloud CLI: once you have run `aliyun configure` there is nothing more to set up; you can also set the environment variables `ALIBABA_CLOUD_ACCESS_KEY_ID` and `ALIBABA_CLOUD_ACCESS_KEY_SECRET`, which take precedence over `aliyun configure`.
 
-**RAM permissions**: `ecs:DescribeInstances`, `ecs:RunCommand`, `ecs:DescribeInvocationResults`, `oss:PutObject`, `oss:GetObject`, plus `oss:DeleteObject` for `pull` and `certs replace` to delete the files they pass through OSS (`oss:DeleteObjectVersion` on a versioned bucket), and `slb:DescribeLoadBalancerAttribute`, `slb:DescribeLoadBalancerListeners`, `slb:DescribeHealthStatus` and `slb:SetBackendServers` for sites with `clb`.
+**RAM permissions**: `ecs:DescribeInstances`, `ecs:RunCommand`, `ecs:DescribeInvocationResults`, `oss:PutObject`, `oss:GetObject`, `oss:ListObjects`, `oss:DeleteObject` (on a versioned bucket, `pull` and `certs replace` need `oss:DeleteObjectVersion` to delete the files they pass through OSS), and `slb:DescribeLoadBalancerAttribute`, `slb:DescribeLoadBalancerListeners`, `slb:DescribeHealthStatus` and `slb:SetBackendServers` for sites with `clb`.
 
 > [!WARNING]
 > Cloud Assistant runs scripts as SYSTEM: whoever holds this AccessKey, human or agent, is an administrator of every instance `ecs:RunCommand` is granted on. Grant it per instance ID, never `*`.
@@ -135,10 +135,14 @@ On each server, aca runs: download and extract → pre-check → stop the site �
   - **A server that fails after its site was stopped stays out of the load balancer**: the CLB health check may not probe this site, so putting it back could send users to a site that didn't start or was broken by the deploy. A server that fails the pre-check hasn't stopped its site, and aca puts it back.
   - **Only the default server group is handled**: for a site whose traffic goes through a VServer group via forwarding rules, taking servers out of the default server group does nothing.
   - **Weights only affect new connections**: layer-7 (HTTP/HTTPS) listeners open a new connection to the server for every request, so they are not affected; connections already established through layer-4 (TCP/UDP) listeners stay on the server and break when its site stops.
-  - **aca doesn't coordinate `deploy` and `rollback` operations running on the same CLB at once**: when two of them work on the same server (two sites on it, for example), the one that finishes first puts the server back into the load balancer while the other site may still be stopped; when the only two servers taking traffic in the default server group are taken out at the same time, the aca that finds no server left serving on its re-check puts its own back, but for a few seconds neither takes traffic.
-- **Only one `deploy` or `rollback` at a time can change a site on a server**; the other one reports `Another aca operation is modifying this site`.
+  - **Only one `deploy` or `rollback` runs on a CLB at a time**: for a site with `clb`, aca holds the lease (below) on the CLB as well as on the site, so deploying another site on the same CLB fails until the run is over.
+- **Only one `deploy` or `rollback` runs on a site at a time**: aca holds a lease for the whole run, and the other one fails right away, naming who holds it, on which machine and since when.
+  - The lease is an object under `<oss.prefix>lease/` on OSS, renewed every 30 seconds while held; it expires 3 minutes after aca is killed, so there is nothing to unlock by hand, and aca stops before the next server once it has gone nearly 2 minutes without a successful renewal.
+  - **It only works between aca installs configured with the same bucket and `oss.prefix`**: that is where the lease lives, and an aca pointed at another bucket cannot see it, so both would deploy at once.
+  - **The lease covers the aca run, not a script already handed to Cloud Assistant**: once aca is killed, the script still runs to the end on the server (up to 30 minutes for a deploy) while the lease expires after 3; check with `aca status <site>` before touching that site again.
+  - **`--check` takes no lease**: the pre-check changes nothing on the servers.
+- **The server has a lock of its own**: only one script at a time can change a given site on a given server; the other one reports `Another aca operation is modifying this site`.
   - The lock is an exclusive handle on `<root>.aca-lock` next to the site directory, released when the script ends or is killed; the file staying around doesn't mean anyone holds it.
-  - **Locks are per server**: two people deploying the same site on several servers at once may each get to different servers; compare the servers with `aca status` afterwards.
 
 #### After a failed deploy
 
@@ -158,7 +162,7 @@ aca restores the latest backup, deletes the files that deploy added, restarts th
 
 ### `aca clb`
 
-Run `aca clb <site>` to list the weight of each server of the site in the default server group of its CLB, with the original weight noted for any server aca took out and hasn't put back; run `aca clb restore <site> <instance>` to set that server's weight back to the original.
+Run `aca clb <site>` to list the weight of each server of the site in the default server group of its CLB, with the original weight noted for any server aca took out and hasn't put back; run `aca clb restore <site> <instance>` to set that server's weight back to the original. `restore` takes the same lease as a deploy, so it fails while the site is being deployed: the server may be stopped right then.
 
 - **The original weight is recorded on this machine under `~/.aca/clb/`**: aca records it before taking a server out and deletes it once the server is back. On another machine, or for a server aca didn't take out, there is no record, so give the weight with `--weight`.
 

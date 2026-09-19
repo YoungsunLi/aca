@@ -40,6 +40,8 @@ export function loadConfig(): Config {
   if (!region || !oss?.bucket) throw new Error(`${file}: region and oss.bucket are required`);
   // 兼容控制台里 oss://bucket/ 的写法
   oss.bucket = oss.bucket.replace(/^oss:\/\/|\/$/g, '');
+  // OSS 对象名没有前导斜杠，SDK 写的时候会去掉、列举的时候不会，两边对不上租约就形同虚设
+  if (oss.prefix) oss.prefix = oss.prefix.replace(/^\/+/, '');
   for (const [name, site] of Object.entries<Site>(sites)) {
     if (!site.instances?.length) throw new Error(`${file}: site "${name}" has no instances`);
     const bad = site.instances.find((i) => !Object.hasOwn(instances, i) && !i.startsWith('i-'));

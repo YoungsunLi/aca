@@ -1,12 +1,14 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { copyFileSync, createReadStream, createWriteStream, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { createReadStream, createWriteStream, rmSync, statSync } from 'node:fs';
+import { copyFile, readdir, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ZipArchive } from 'archiver';
 import { clbOf, outOfClb } from './clb.ts';
 import { type Config, getSite } from './config.ts';
 import { Ecs, type RunResult } from './ecs.ts';
+import { siteLease } from './lease.ts';
 import { exists, signForEcs, upload } from './oss.ts';
 import { renderScript } from './ps.ts';
 
@@ -21,34 +23,41 @@ const objectOf = (cfg: Config, sha256: string) => `${cfg.oss.prefix ?? ''}${sha2
 // 多台服务器按配置顺序逐台发布，一台失败就停：坏包只影响一台，负载均衡下其余服务器继续服务
 export async function* deploy(cfg: Config, site: string, path: string | undefined, { check = false, message = '', force = false, skipStage = false, fromStage = false }: DeployOptions): AsyncGenerator<[string, RunResult]> {
   const { instances, publish, exclude = [], stage, keep = 5 } = getSite(cfg, site);
-  const deployId = new Date().toISOString().replace(/[-:]|\.\d+/g, '');
-  const ecs = new Ecs(cfg);
-  const clb = clbOf(cfg, site);
-  await clb?.check(instances);
-  let pkg: Package;
-  if (fromStage) {
-    if (!stage) throw new Error(`Site ${site} has no stage site in the config`);
-    if (path) throw new Error('--from-stage takes no path');
-    pkg = await assertStaged(cfg, ecs, stage);
-    if (packageId(pkg.sha256, exclude) !== pkg.id) throw new Error(`Package ${pkg.id} was deployed to stage site ${stage} with a different exclude list; deploy to the stage site again`);
-  } else {
-    const localPath = path ?? publish;
-    if (!localPath) throw new Error(`No package path given and site ${site} has no publish directory in the config`);
-    pkg = await uploadLocal(cfg, ecs, localPath, exclude, skipStage ? undefined : stage);
-  }
-  const object = objectOf(cfg, pkg.sha256);
-  if (fromStage && !await exists(cfg, object)) throw new Error(`Package ${pkg.id} is no longer on OSS, most likely removed by the bucket's lifecycle rule; deploy the same build from a local path instead`);
+  // 预检查不改服务器上的任何东西
+  const held = check ? undefined : await siteLease(cfg, site, `deploy ${site}`);
+  try {
+    const deployId = new Date().toISOString().replace(/[-:]|\.\d+/g, '');
+    const ecs = new Ecs(cfg, held);
+    const clb = clbOf(cfg, site, held);
+    await clb?.check(instances);
+    let pkg: Package;
+    if (fromStage) {
+      if (!stage) throw new Error(`Site ${site} has no stage site in the config`);
+      if (path) throw new Error('--from-stage takes no path');
+      pkg = await assertStaged(cfg, ecs, stage);
+      if (packageId(pkg.sha256, exclude) !== pkg.id) throw new Error(`Package ${pkg.id} was deployed to stage site ${stage} with a different exclude list; deploy to the stage site again`);
+    } else {
+      const localPath = path ?? publish;
+      if (!localPath) throw new Error(`No package path given and site ${site} has no publish directory in the config`);
+      pkg = await uploadLocal(cfg, ecs, localPath, exclude, skipStage ? undefined : stage);
+    }
+    const object = objectOf(cfg, pkg.sha256);
+    if (fromStage && !await exists(cfg, object)) throw new Error(`Package ${pkg.id} is no longer on OSS, most likely removed by the bucket's lifecycle rule; deploy the same build from a local path instead`);
 
-  const timeout = 1800;
-  for (const [i, name] of instances.entries()) {
-    // 每台服务器现签一个链接，有效期同这台的运行时限：STS 类凭证签出的链接随 token 失效，整批共用一个，排在后面的服务器会下载失败。
-    // 签在摘出负载均衡之前，签名出错时这台服务器还没被摘
-    const script = renderScript('deploy', {
-      SITE: site, URL: await signForEcs(cfg, object, timeout), SHA256: pkg.sha256, DEPLOY_ID: deployId, PACKAGE: pkg.id, MESSAGE: message,
-      CHECK_ONLY: String(check), FORCE: String(force), EXCLUDE: exclude.join('\n'), KEEP: String(keep),
-    });
-    const r = yield* outOfClb(check ? undefined : clb, name, () => ecs.runPowerShell(name, script, timeout));
-    if (r.status !== 'Success') throw new Error(`${name}: ${check ? 'pre-check' : 'deploy'} failed, ${instances.length - i - 1} remaining server(s) not processed`);
+    const timeout = 1800;
+    for (const [i, name] of instances.entries()) {
+      held?.check();
+      // 每台服务器现签一个链接，有效期同这台的运行时限：STS 类凭证签出的链接随 token 失效，整批共用一个，排在后面的服务器会下载失败。
+      // 签在摘出负载均衡之前，签名出错时这台服务器还没被摘
+      const script = renderScript('deploy', {
+        SITE: site, URL: await signForEcs(cfg, object, timeout), SHA256: pkg.sha256, DEPLOY_ID: deployId, PACKAGE: pkg.id, MESSAGE: message,
+        CHECK_ONLY: String(check), FORCE: String(force), EXCLUDE: exclude.join('\n'), KEEP: String(keep),
+      });
+      const r = yield* outOfClb(check ? undefined : clb, held, name, () => ecs.runPowerShell(name, script, timeout));
+      if (r.status !== 'Success') throw new Error(`${name}: ${check ? 'pre-check' : 'deploy'} failed, ${instances.length - i - 1} remaining server(s) not processed`);
+    }
+  } finally {
+    await held?.release();
   }
 }
 
@@ -60,7 +69,7 @@ async function uploadLocal(cfg: Config, ecs: Ecs, path: string, exclude: string[
   const zip = join(tmpdir(), `aca-${randomBytes(8).toString('hex')}.zip`);
   try {
     if (isDir) await zipDir(path, zip);
-    else copyFileSync(path, zip);
+    else await copyFile(path, zip);
     const hash = createHash('sha256');
     for await (const chunk of createReadStream(zip)) hash.update(chunk as Buffer);
     const sha256 = hash.digest('hex');
@@ -100,12 +109,13 @@ async function zipDir(dir: string, out: string) {
     archive.pipe(createWriteStream(out).on('close', resolve).on('error', reject));
   });
   closed.catch(() => {});
-  for (const rel of readdirSync(dir, { recursive: true, encoding: 'utf8' }).sort()) {
+  // 这里不用同步 fs：网络盘上枚举或读一个大文件会把事件循环堵死，租约就续不上了
+  for (const rel of (await readdir(dir, { recursive: true, encoding: 'utf8' })).sort()) {
     const full = join(dir, rel);
-    const stat = statSync(full);
-    if (stat.isDirectory()) continue;
+    const info = await stat(full);
+    if (info.isDirectory()) continue;
     const written = once(archive, 'entry');
-    archive.append(readFileSync(full), { name: rel.replaceAll('\\', '/'), date: stat.mtime });
+    archive.append(await readFile(full), { name: rel.replaceAll('\\', '/'), date: info.mtime });
     await written;
   }
   await archive.finalize();

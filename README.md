@@ -67,7 +67,7 @@ aca skill install  # 给 Claude Code、Codex 装上 skill，升级 aca 后再跑
 
 凭证按阿里云 SDK 的[默认凭证链](https://help.aliyun.com/zh/sdk/developer-reference/v2-manage-node-js-access-credentials)查找，和阿里云 CLI 共用：`aliyun configure` 配过就不用再配，也可以设环境变量 `ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET`，两处都配了时环境变量优先。
 
-**RAM 权限**：`ecs:DescribeInstances`、`ecs:RunCommand`、`ecs:DescribeInvocationResults`、`oss:PutObject`、`oss:GetObject`，`pull` 和 `certs replace` 删 OSS 上中转的文件还要 `oss:DeleteObject`（bucket 开了版本控制是 `oss:DeleteObjectVersion`），站点配了 `clb` 还要 `slb:DescribeLoadBalancerAttribute`、`slb:DescribeLoadBalancerListeners`、`slb:DescribeHealthStatus`、`slb:SetBackendServers`。
+**RAM 权限**：`ecs:DescribeInstances`、`ecs:RunCommand`、`ecs:DescribeInvocationResults`、`oss:PutObject`、`oss:GetObject`、`oss:ListObjects`、`oss:DeleteObject`（bucket 开了版本控制时，`pull` 和 `certs replace` 删 OSS 上中转的文件要 `oss:DeleteObjectVersion`），站点配了 `clb` 还要 `slb:DescribeLoadBalancerAttribute`、`slb:DescribeLoadBalancerListeners`、`slb:DescribeHealthStatus`、`slb:SetBackendServers`。
 
 > [!WARNING]
 > 云助手以 SYSTEM 身份执行脚本，`ecs:RunCommand` 授权到哪些实例，持有这份 AccessKey 的人和 Agent 就是哪些实例的管理员，按实例 ID 授权，不要给 `*`。
@@ -135,10 +135,14 @@ aca 在每台服务器上依次执行：下载解压 → 预检查 → 停站 �
   - **停过站又失败的服务器留在负载均衡外**：CLB 的健康检查查的不一定是这个站点，放回去用户可能撞上没起来或发坏了的站点。预检查没过的服务器还没停站，aca 直接放回。
   - **只管默认服务器组**：站点经转发规则走虚拟服务器组时，摘默认服务器组没有用。
   - **权重只管新连接**：七层（HTTP/HTTPS）监听每个请求都新建到服务器的连接，不受影响；四层（TCP/UDP）监听上已经建立的连接会一直连到这台服务器，停站时断开。
-  - **同一个 CLB 上同时进行的几个 `deploy`、`rollback` 之间 aca 不协调**：同时处理同一台服务器时（比如这台服务器上的两个站点），先结束的会把服务器放回负载均衡，另一个站点可能还停着；默认服务器组里只剩两台在接流量时同时摘这两台，摘完复查发现没有服务器接流量的那个 aca 会把自己摘的放回，但中间有几秒两台都不接流量。
-- **同一台服务器上的同一站点同时只有一个 `deploy` 或 `rollback` 能改文件**，撞上的那个报 `Another aca operation is modifying this site`。
+  - **同一个 CLB 上同时只有一个 `deploy` 或 `rollback`**：站点配了 `clb` 时，aca 把 CLB 连同站点一起占进租约（见下），这一轮走完之前，同一个 CLB 上别的站点发不了。
+- **同一个站点同时只有一个 `deploy` 或 `rollback`**：aca 整轮持有一份租约，撞上的那个立即报错，写明是谁、在哪台机器上、从什么时候开始。
+  - 租约是 OSS 上 `<oss.prefix>lease/` 下的一个对象，持有期间每 30 秒续一次，aca 被强杀后 3 分钟自动失效，不用手工解锁；快 2 分钟续不上时 aca 在动下一台服务器之前停下。
+  - **只在配了同一个 bucket 和 `oss.prefix` 的 aca 之间有效**：租约就放在那里，指向别的 bucket 的 aca 看不见它，两边会同时发。
+  - **租约只管 aca 这一轮，管不了已经发给云助手的脚本**：aca 被强杀后脚本还会在服务器上跑完（发布最长 30 分钟），租约却 3 分钟就失效；先用 `aca status <站点>` 看清楚再动这个站点。
+  - **`--check` 不占租约**：预检查不改服务器上的任何东西。
+- **服务器本机还有一把锁**：同一台服务器上的同一个站点，同时只有一个脚本能改文件，撞上的那个报 `Another aca operation is modifying this site`。
   - 加锁的方式是独占打开站点目录旁的 `<root>.aca-lock`，脚本结束或被强杀都会释放锁；文件留着不代表有人在改。
-  - **锁是每台服务器各管各的**：两个人同时发同一个跑在多台服务器上的站点，可能各自发到不同服务器上，事后用 `aca status` 核对每台服务器的版本。
 
 #### 发布失败后
 
@@ -158,7 +162,7 @@ aca 恢复最近一次备份、删除那次新增的文件、重启站点，然�
 
 ### `aca clb`
 
-用 `aca clb <站点>` 看站点每台服务器在 CLB 默认服务器组里的权重，aca 摘下后没放回的会注明原来的权重；用 `aca clb restore <站点> <实例>` 把这台服务器的权重调回原来的值。
+用 `aca clb <站点>` 看站点每台服务器在 CLB 默认服务器组里的权重，aca 摘下后没放回的会注明原来的权重；用 `aca clb restore <站点> <实例>` 把这台服务器的权重调回原来的值。`restore` 和发布占同一份租约，这个站点正发着时它报错：那台服务器可能正停着站。
 
 - **原来的权重记在本机 `~/.aca/clb/`**：aca 摘服务器之前记下，放回后删掉。换一台机器，或者服务器不是 aca 摘的，没有记录可用，要用 `--weight` 给出权重。
 

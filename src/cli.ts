@@ -8,9 +8,10 @@ import { isWeight, siteClb } from './clb.ts';
 import { getSite, loadConfig } from './config.ts';
 import { deploy, type DeployOptions } from './deploy.ts';
 import { Ecs, type RunResult } from './ecs.ts';
+import { siteLease } from './lease.ts';
 import { renderScript } from './ps.ts';
 import { pull } from './pull.ts';
-import { planRollback, rollback } from './rollback.ts';
+import { planRollback, printPlan, rollback } from './rollback.ts';
 
 const program = new Command('aca').description('Run PowerShell on Windows ECS instances and deploy or roll back IIS sites through Alibaba Cloud Cloud Assistant')
   .version(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);
@@ -88,13 +89,8 @@ program.command('rollback <site>').description('Roll back the latest deploy of a
   .option('-c, --check', 'only show which backup each server would restore')
   .action(async (site: string, opts: { check?: boolean }) => {
     const cfg = loadConfig();
-    const plan = await planRollback(cfg, site);
-    for (const { name, backup } of plan.steps) {
-      console.log(`== ${name}: ${backup
-        ? `roll back deploy ${plan.deployId}: restore ${backup.restored} files, delete ${backup.added} added files  (${backup.dir})`
-        : `no backup of deploy ${plan.deployId}, skipped`}`);
-    }
-    if (!opts.check) await reportEach(rollback(cfg, plan));
+    if (opts.check) printPlan(await planRollback(cfg, site));
+    else await reportEach(rollback(cfg, site));
   });
 
 const clb = program.command('clb <site>').description('Show the weight of each server of the site in the default server group of its CLB')
@@ -108,7 +104,14 @@ clb.command('restore <site> <instance>').description('Put a server back into the
   .action(async (site: string, instance: string, opts: { weight?: string }) => {
     const weight = opts.weight === undefined ? undefined : Number(opts.weight);
     if (weight !== undefined && !isWeight(weight)) throw new Error(`--weight must be an integer from 1 to 100, got "${opts.weight}"`);
-    await siteClb(loadConfig(), site).restore(instance, weight);
+    const cfg = loadConfig();
+    // 占着和发布同一份租约：正发着的那台服务器停着站，放回去就会把请求转给它
+    const held = await siteLease(cfg, site, `clb restore ${site} ${instance}`);
+    try {
+      await siteClb(cfg, site, held).restore(instance, weight);
+    } finally {
+      await held.release();
+    }
   });
 
 program.command('skill').description('Agent Skill that lets Claude Code, Codex and other agents use aca')

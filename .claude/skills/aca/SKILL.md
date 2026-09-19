@@ -83,7 +83,7 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
 6. 如果 aca 报的是 `Polling Cloud Assistant results failed` 或 `Timed out waiting for Cloud Assistant results`，那是看不到结果，不是发布失败，
    服务器上的脚本可能还在跑。先跑 `aca status <站点>` 看有没有这次的记录，不要马上回退。
 7. `--check` 输出里有 `NOTE: app pool … is shared` 时，告诉用户发布会让那几个站点也中断几秒。
-8. 报 `Another aca operation is modifying this site` 就是有人在同时发，等它结束再试。
+8. 报 `... is held by <用户>@<机器>` 是别人正在发这个站点，或正在发同一个 CLB 上的另一个站点，等它结束再试；`Another aca operation is modifying this site` 同理。
    报 `The site was deployed again after this rollback was planned` 是中间有人发了新版本，重新跑 `aca rollback <站点> --check` 看清楚再决定。
 9. 配了 `clb` 的站点，输出里有 `WARN: <实例> stays out of CLB` 时，这台服务器留在了负载均衡外，回退、重发都不会放回它：
    告诉用户，等这台服务器上的站点正常了（比如回退输出里的首页状态码和发布前一样），用户同意后跑 `aca clb restore <站点> <实例>`。

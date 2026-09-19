@@ -1,6 +1,7 @@
 import { clbOf, outOfClb } from './clb.ts';
 import { type Config, getSite } from './config.ts';
 import { Ecs, type RunResult } from './ecs.ts';
+import { siteLease } from './lease.ts';
 import { renderScript } from './ps.ts';
 
 type Backup = { dir: string; deployId: string; restored: number; added: number };
@@ -31,16 +32,33 @@ export async function planRollback(cfg: Config, site: string): Promise<RollbackP
   return { site, deployId, steps };
 }
 
-export async function* rollback(cfg: Config, plan: RollbackPlan): AsyncGenerator<[string, RunResult]> {
-  const ecs = new Ecs(cfg);
-  const clb = clbOf(cfg, plan.site);
-  const steps = plan.steps.filter((s) => s.backup);
-  const weights = await clb?.check(steps.map((s) => s.name));
-  // 已经留在负载均衡外的先回退：两台服务器的站点发坏一台时，先回退另一台会因为摘了它就没人接流量而报错停下
-  steps.sort((a, b) => Number(weights?.get(b.name) === 0) - Number(weights?.get(a.name) === 0));
-  for (const { name, backup } of steps) {
-    const script = renderScript('rollback', { SITE: plan.site, BACKUP: backup!.dir });
-    const r = yield* outOfClb(clb, name, () => ecs.runPowerShell(name, script, 600));
-    if (r.status !== 'Success') throw new Error(`${name}: rollback failed`);
+export function printPlan(plan: RollbackPlan) {
+  for (const { name, backup } of plan.steps) {
+    console.log(`== ${name}: ${backup
+      ? `roll back deploy ${plan.deployId}: restore ${backup.restored} files, delete ${backup.added} added files  (${backup.dir})`
+      : `no backup of deploy ${plan.deployId}, skipped`}`);
+  }
+}
+
+export async function* rollback(cfg: Config, site: string): AsyncGenerator<[string, RunResult]> {
+  // 计划在租约里算：算完之后别人再发一版，回退就会拿这次发布的备份去盖他那一版
+  const held = await siteLease(cfg, site, `rollback ${site}`);
+  try {
+    const plan = await planRollback(cfg, site);
+    printPlan(plan);
+    const ecs = new Ecs(cfg, held);
+    const clb = clbOf(cfg, site, held);
+    const steps = plan.steps.filter((s) => s.backup);
+    const weights = await clb?.check(steps.map((s) => s.name));
+    // 已经留在负载均衡外的先回退：两台服务器的站点发坏一台时，先回退另一台会因为摘了它就没人接流量而报错停下
+    steps.sort((a, b) => Number(weights?.get(b.name) === 0) - Number(weights?.get(a.name) === 0));
+    for (const { name, backup } of steps) {
+      held.check();
+      const script = renderScript('rollback', { SITE: site, BACKUP: backup!.dir });
+      const r = yield* outOfClb(clb, held, name, () => ecs.runPowerShell(name, script, 600));
+      if (r.status !== 'Success') throw new Error(`${name}: rollback failed`);
+    }
+  } finally {
+    await held.release();
   }
 }

@@ -6,8 +6,12 @@ import $OpenApi from '@alicloud/openapi-client';
 import $Slb from '@alicloud/slb20140515';
 import { type Config, getSite, instanceId } from './config.ts';
 import type { RunResult } from './ecs.ts';
+import type { Lease } from './lease.ts';
 
 type TakenOut = { putBack(): Promise<void>; leaveOut(): void };
+
+// SetBackendServers 实测要两三秒才返回，SDK 默认 3 秒没收到数据就报超时（报的是 ConnectTimeout），这时权重多半已经改了
+const TIMEOUTS = { connectTimeout: 30_000, readTimeout: 30_000 };
 
 export const isWeight = (weight: number) => Number.isInteger(weight) && weight > 0 && weight <= 100;
 
@@ -31,13 +35,16 @@ export class Clb {
   #aliases: Record<string, string>;
   #client: InstanceType<typeof $Slb.default>;
   #checkedListeners?: Promise<string[]>;
+  #held?: Lease;
+  #credential: Config['credential'];
 
-  constructor({ region, credential, instances }: Config, id: string) {
+  constructor({ region, credential, instances }: Config, id: string, held?: Lease) {
     this.id = id;
     this.#region = region;
     this.#aliases = instances;
-    // SetBackendServers 实测要两三秒才返回，SDK 默认 3 秒没收到数据就报超时（报的是 ConnectTimeout），这时权重多半已经改了
-    this.#client = new $Slb.default(new $OpenApi.Config({ credential, regionId: region, connectTimeout: 30_000, readTimeout: 30_000 }));
+    this.#held = held;
+    this.#credential = credential;
+    this.#client = new $Slb.default(new $OpenApi.Config({ credential, regionId: region, ...TIMEOUTS }));
   }
 
   // 处理第一台服务器之前核对：处理到一半才发现有服务器不在组里，服务器之间的版本就不一致了
@@ -159,27 +166,33 @@ export class Clb {
     console.log(`CLB ${this.id}: ${name} weight 0 -> ${weight}`);
   }
 
+  // 改权重前都查一遍租约：takeOut 等别的服务器接流量最多要等 5 分钟，足够把租约等没。
+  // 凭证先取到手、再交给这一次的客户端，SDK 就不会在查完租约之后又去刷一次：刷新要走网络，连接、读取超时管不到它，会把租约剩下的余量耗掉
   async #setWeight(id: string, weight: number) {
-    await this.#client.setBackendServers(new $Slb.SetBackendServersRequest({
+    const { accessKeyId, accessKeySecret, securityToken } = await this.#credential.getCredential();
+    this.#held?.check();
+    const client = new $Slb.default(new $OpenApi.Config({ accessKeyId, accessKeySecret, securityToken, regionId: this.#region, ...TIMEOUTS }));
+    await client.setBackendServers(new $Slb.SetBackendServersRequest({
       regionId: this.#region, loadBalancerId: this.id, backendServers: JSON.stringify([{ ServerId: id, Weight: String(weight) }]),
     }));
   }
 }
 
-export function clbOf(cfg: Config, site: string): Clb | undefined {
+export function clbOf(cfg: Config, site: string, held?: Lease): Clb | undefined {
   const id = getSite(cfg, site).clb;
-  return id ? new Clb(cfg, id) : undefined;
+  return id ? new Clb(cfg, id, held) : undefined;
 }
 
-export function siteClb(cfg: Config, site: string): Clb {
-  const clb = clbOf(cfg, site);
+export function siteClb(cfg: Config, site: string, held?: Lease): Clb {
+  const clb = clbOf(cfg, site, held);
   if (!clb) throw new Error(`Site ${site} has no clb in the config`);
   return clb;
 }
 
 // 停过站还失败的留在外面：CLB 的健康检查查的不一定是这个站点，放回去用户就会撞上没起来或发坏了的站点
-export async function* outOfClb(clb: Clb | undefined, name: string, run: () => Promise<RunResult>): AsyncGenerator<[string, RunResult], RunResult> {
+export async function* outOfClb(clb: Clb | undefined, held: Lease | undefined, name: string, run: () => Promise<RunResult>): AsyncGenerator<[string, RunResult], RunResult> {
   const out = await clb?.takeOut(name);
+  // 租约在 takeOut 里等没了的话，run 里发命令前的那遍检查会报错，服务器留在负载均衡外
   const r = await run().catch((e: unknown) => {
     out?.leaveOut();
     throw e;
