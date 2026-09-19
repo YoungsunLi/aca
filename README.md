@@ -10,7 +10,7 @@
 
 </div>
 
-通过[阿里云云助手](https://help.aliyun.com/zh/ecs/user-guide/overview-10)在 Windows ECS 上执行 PowerShell、发布和回退 IIS 站点。
+通过[阿里云云助手](https://help.aliyun.com/zh/ecs/user-guide/overview-10)在 Windows ECS 上执行 PowerShell、发布和回退 IIS 站点、检查和更换 SSL 证书。
 
 - **服务器上不用装东西、不用开端口**，只需 AccessKey。
 - **输出纯文本**，失败以非 0 退出码表示。
@@ -65,7 +65,7 @@ aca skill install  # 给 Claude Code、Codex 装上 skill，升级 aca 后再跑
 
 凭证按阿里云 SDK 的[默认凭证链](https://help.aliyun.com/zh/sdk/developer-reference/v2-manage-node-js-access-credentials)查找，和阿里云 CLI 共用：`aliyun configure` 配过就不用再配，也可以设环境变量 `ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET`，两处都配了时环境变量优先。
 
-**RAM 权限**：`ecs:DescribeInstances`、`ecs:RunCommand`、`ecs:DescribeInvocationResults`、`oss:PutObject`、`oss:GetObject`。
+**RAM 权限**：`ecs:DescribeInstances`、`ecs:RunCommand`、`ecs:DescribeInvocationResults`、`oss:PutObject`、`oss:GetObject`，`certs replace` 删上传的 PFX 还要 `oss:DeleteObject`（bucket 开了版本控制是 `oss:DeleteObjectVersion`）。
 
 > [!WARNING]
 > 云助手以 SYSTEM 身份执行脚本，`ecs:RunCommand` 授权到哪些实例，持有这份 AccessKey 的人和 Agent 就是哪些实例的管理员，按实例 ID 授权，不要给 `*`。
@@ -91,6 +91,8 @@ aca deploy "Default Web Site" ./publish --check # 只预检查，打印将覆盖
 aca deploy "Default Web Site" ./publish -m "release-2026-09"  # 目录或 zip；-m 写进发布记录
 aca status "Default Web Site"                   # 每台服务器上最新的文件时间和最近 5 条发布/回退记录
 aca certs                                       # 每台服务器上运行中站点的 https 绑定实际发出的证书
+aca certs replace ./a.pfx --password-file ./pw.txt --check  # 看每台服务器会把哪些 https 绑定换成这张证书
+aca certs replace ./a.pfx --password-file ./pw.txt  # 换证书
 aca rollback "Default Web Site" --check         # 看每台服务器会撤掉哪次发布
 aca rollback "Default Web Site"                 # 回退最近一次发布
 ```
@@ -137,6 +139,18 @@ aca 在登记站点所在的每台服务器上，按每个运行中站点的 htt
 
 - **退出码**：证书过期、30 天内到期、不含绑定的域名（`*.a.com` 管不到 `x.y.a.com`）或握手失败时以非 0 退出，可以放进计划任务定期跑。
 - **看的是握手结果而不是 IIS 里的配置**：SNI 绑定用的证书被删掉后，http.sys 改发同端口不带 SNI 的绑定的证书，没有就断开连接，IIS 里显示的还是原来那张。
+
+### `aca certs replace`
+
+aca 在同一批服务器上，把正在用同名证书（按证书使用者名称，如 `*.a.com`）的 https 绑定全部换成这张证书，旧证书留在服务器上。
+
+- **换的单位是 http.sys 的绑定条目而不是站点**：不带 SNI 的绑定共用一个 IP:端口 条目，换其中一个站点就是全换，`--check` 会列出每个条目上的站点。
+- **aca 换完一台再换下一台**，换前换后都在服务器本机按运行中站点的 https 绑定握手：原来发同名证书的绑定换完必须发新证书，原来域名对得上、证书链在服务器上验证得过的，换完也得一样，否则这台服务器换回旧证书，后面的服务器不再换，已换好的服务器不动。
+- **同一台服务器上同时只有一个 `certs replace` 能换**，锁是独占打开 `%ProgramData%\aca-certs.aca-lock`。
+- **新证书不在有效期内，aca 拒绝换**；不比被换掉的晚到期也拒绝，多半是拿错了文件，换回旧证书时把 PFX 换成旧证书的指纹，并加 `-f`。
+- **条目上有 IIS 默认值以外的 http.sys 设置**（客户端证书协商、吊销检查等）时 aca 不换：换证书会把这些设置丢掉，这种条目要手工换。
+- **aca 把 PFX 用一次性密钥加密后经 OSS 传到服务器**，全部服务器处理完就删掉：私钥不能写进 RunCommand，云助手的执行记录里查得到命令内容。PFX 密码从 `--password-file` 读，和解密密钥一起留在执行记录里。
+- **Windows Server 2016 及更早的系统打不开 AES 加密的 PFX**（OpenSSL 3 默认就是），报的却是密码不正确，用 `openssl pkcs12 -export -legacy` 重新导出。
 
 ## 轮询失败或超时
 

@@ -7,9 +7,16 @@ async function options({ region, oss, credential }: Config) {
   return { region: `oss-${region}`, bucket: oss.bucket, accessKeyId: accessKeyId!, accessKeySecret: accessKeySecret!, stsToken: securityToken, secure: true };
 }
 
-export async function upload(cfg: Config, localFile: string, objectName: string) {
+/** 返回版本 ID：bucket 开了版本控制时，删除要带上它才删得掉这个版本，否则只是加一个删除标记 */
+export async function upload(cfg: Config, file: string | Buffer, objectName: string): Promise<string | undefined> {
   // 默认 60 秒超时，几百 MB 的包传不完
-  await new OSS({ ...await options(cfg), timeout: 600_000 }).put(objectName, localFile);
+  const { res } = await new OSS({ ...await options(cfg), timeout: 600_000 }).put(objectName, file);
+  return (res.headers as Record<string, string>)['x-oss-version-id'];
+}
+
+export async function remove(cfg: Config, objectName: string, versionId: string | undefined) {
+  // SDK 支持 versionId，类型声明里没写
+  await new OSS(await options(cfg)).delete(objectName, { versionId } as OSS.RequestOptions);
 }
 
 // 内网签名 URL：ECS 与 bucket 同地域时走内网，免流量费且更快

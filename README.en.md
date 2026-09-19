@@ -10,7 +10,7 @@
 
 </div>
 
-Run PowerShell on Windows ECS instances and deploy or roll back IIS sites through Alibaba Cloud [Cloud Assistant](https://www.alibabacloud.com/help/en/ecs/user-guide/overview-10).
+Run PowerShell on Windows ECS instances, deploy or roll back IIS sites, and check or replace their SSL certificates through Alibaba Cloud [Cloud Assistant](https://www.alibabacloud.com/help/en/ecs/user-guide/overview-10).
 
 - **Nothing to install and no ports to open on the servers**, just an AccessKey.
 - **Plain-text output** with non-zero exit codes on failure.
@@ -65,7 +65,7 @@ The keys of `sites` are IIS site names; `deploy` only accepts sites registered h
 
 Credentials are resolved by the Alibaba Cloud SDK's [default credential chain](https://www.alibabacloud.com/help/en/sdk/developer-reference/v2-manage-node-js-access-credentials), shared with the Alibaba Cloud CLI: once you have run `aliyun configure` there is nothing more to set up; you can also set the environment variables `ALIBABA_CLOUD_ACCESS_KEY_ID` and `ALIBABA_CLOUD_ACCESS_KEY_SECRET`, which take precedence over `aliyun configure`.
 
-**RAM permissions**: `ecs:DescribeInstances`, `ecs:RunCommand`, `ecs:DescribeInvocationResults`, `oss:PutObject`, `oss:GetObject`.
+**RAM permissions**: `ecs:DescribeInstances`, `ecs:RunCommand`, `ecs:DescribeInvocationResults`, `oss:PutObject`, `oss:GetObject`, plus `oss:DeleteObject` for `certs replace` to delete the PFX it uploads (`oss:DeleteObjectVersion` on a versioned bucket).
 
 > [!WARNING]
 > Cloud Assistant runs scripts as SYSTEM: whoever holds this AccessKey, human or agent, is an administrator of every instance `ecs:RunCommand` is granted on. Grant it per instance ID, never `*`.
@@ -91,6 +91,8 @@ aca deploy "Default Web Site" ./publish --check # pre-check only: list the files
 aca deploy "Default Web Site" ./publish -m "release-2026-09"  # directory or zip; -m goes into the deploy log
 aca status "Default Web Site"                   # newest file time + last 5 deploy/rollback entries of each server
 aca certs                                       # certificates the HTTPS bindings of running sites actually serve on each server
+aca certs replace ./a.pfx --password-file ./pw.txt --check  # see which HTTPS bindings each server would switch to this certificate
+aca certs replace ./a.pfx --password-file ./pw.txt  # switch them
 aca rollback "Default Web Site" --check         # see which deploy each server would roll back
 aca rollback "Default Web Site"                 # roll back the latest deploy
 ```
@@ -137,6 +139,18 @@ On every server of the configured sites, aca does a TLS handshake on the server 
 
 - **Exits non-zero** if a certificate is expired, expires within 30 days, doesn't cover the binding's host name (`*.a.com` doesn't cover `x.y.a.com`) or the handshake fails, so it can run as a scheduled task.
 - **It reports what the handshake returns, not the IIS configuration**: once the certificate of an SNI binding is deleted, http.sys serves the certificate of the non-SNI binding on the same port instead, or drops the connection if there is none, while IIS still shows the old certificate.
+
+### `aca certs replace`
+
+On the same servers, aca switches every HTTPS binding that uses a certificate with the same subject name (e.g. `*.a.com`) to this certificate; the old certificates stay on the servers.
+
+- **It switches http.sys binding entries, not sites**: non-SNI bindings share one IP:port entry, so switching one of those sites switches them all; `--check` lists the sites on each entry.
+- **aca switches the servers one at a time**, with a handshake on the server itself for each HTTPS binding of the running sites before and after: every binding that served a certificate with that name must serve the new one afterwards, and one whose host name matched or whose chain the server trusted must still do so; otherwise that server switches back to the old certificates and aca stops there, leaving servers already switched as they are.
+- **Only one `certs replace` at a time can switch certificates on a server**; the lock is an exclusive handle on `%ProgramData%\aca-certs.aca-lock`.
+- **A certificate that is not valid now is refused**, and so is one that does not expire later than the one it replaces, as it is most likely the wrong file; to switch back, pass the old certificate's thumbprint instead of a PFX and add `-f`.
+- **Entries carrying http.sys settings beyond the IIS defaults** (client certificate negotiation, revocation checks and the like) are left alone: switching would drop those settings, so switch them by hand.
+- **The PFX is encrypted with a one-time key**, reaches the servers through OSS and is deleted once all servers are done: a private key can't go into RunCommand, whose content shows up in the Cloud Assistant invocation history. The PFX password is read from `--password-file` and, like the decryption key, does stay in that history.
+- **Windows Server 2016 and earlier can't open AES-encrypted PFX files** (OpenSSL 3's default) and report a wrong password instead; re-export with `openssl pkcs12 -export -legacy`.
 
 ## Polling failures and timeouts
 

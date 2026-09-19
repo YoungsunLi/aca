@@ -1,7 +1,7 @@
 {
   "name": "aca-cli",
   "version": "0.1.0",
-  "description": "通过阿里云云助手管理 Windows ECS、发布 IIS 站点的 CLI，附带 Agent Skill",
+  "description": "通过阿里云云助手管理 Windows ECS、发布 IIS 站点、检查和更换 SSL 证书的 CLI，附带 Agent Skill",
   "keywords": [
     "agent-skills",
     "alibaba-cloud",
@@ -12,6 +12,7 @@
     "ecs",
     "iis",
     "powershell",
+    "ssl-certificates",
     "windows-server"
   ],
   "author": "YoungsunLi",

@@ -26,7 +26,7 @@ if ($shared) { "NOTE: app pool $pool is shared with site(s) $($shared -join ', '
 New-Item -ItemType Directory -Path $work | Out-Null
 try {
   # 下载前就加锁：后面算的"新增文件"等都依赖站点目录此刻的样子，中途被别的发布改了备份清单就错了
-  if (-not $checkOnly) { $lock = Lock-AcaSite $root }
+  if (-not $checkOnly) { $lock = Lock-Aca $root }
   # 先下载并解压、做完检查再停站，缩短停机时间
   Invoke-WebRequest -Uri $url -OutFile "$work\pkg.zip" -UseBasicParsing
   # 对 OSS 有写权限的人能在各服务器下载前把包换掉

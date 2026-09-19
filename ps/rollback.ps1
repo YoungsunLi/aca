@@ -2,7 +2,7 @@ $backup = '__BACKUP__'
 $web = Get-AcaSite '__SITE__'
 $root = Get-AcaRoot $web
 
-$lock = Lock-AcaSite $root
+$lock = Lock-Aca $root
 try {
   # 计划和执行之间可能又发布过一次，那样该退的是更新的那份备份
   $newest = Get-AcaBackups $root | Select-Object -Last 1
