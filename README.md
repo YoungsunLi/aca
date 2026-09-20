@@ -2,9 +2,9 @@
 
 ![aca — Aliyun Cloud Assistant CLI](.github/banner.svg)
 
-[![npm](https://img.shields.io/npm/v/aca-cli?logo=npm)](https://www.npmjs.com/package/aca-cli)
-[![node](https://img.shields.io/node/v/aca-cli?logo=nodedotjs)](https://nodejs.org/)
-[![license](https://img.shields.io/npm/l/aca-cli)](LICENSE)
+[![npm](https://img.shields.io/npm/v/@ninesols/aca-cli?logo=npm)](https://www.npmjs.com/package/@ninesols/aca-cli)
+[![node](https://img.shields.io/node/v/@ninesols/aca-cli?logo=nodedotjs)](https://nodejs.org/)
+[![license](https://img.shields.io/npm/l/@ninesols/aca-cli)](LICENSE)
 
 简体中文 | [English](README.en.md)
 
@@ -21,7 +21,7 @@
 需要 Node 22.12+。
 
 ```sh
-npm install -g aca-cli
+npm install -g @ninesols/aca-cli
 aca skill install  # 给 Claude Code、Codex 装上 skill，升级 aca 后再跑一次
 ```
 

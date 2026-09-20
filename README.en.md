@@ -2,9 +2,9 @@
 
 ![aca — Aliyun Cloud Assistant CLI](.github/banner.svg)
 
-[![npm](https://img.shields.io/npm/v/aca-cli?logo=npm)](https://www.npmjs.com/package/aca-cli)
-[![node](https://img.shields.io/node/v/aca-cli?logo=nodedotjs)](https://nodejs.org/)
-[![license](https://img.shields.io/npm/l/aca-cli)](LICENSE)
+[![npm](https://img.shields.io/npm/v/@ninesols/aca-cli?logo=npm)](https://www.npmjs.com/package/@ninesols/aca-cli)
+[![node](https://img.shields.io/node/v/@ninesols/aca-cli?logo=nodedotjs)](https://nodejs.org/)
+[![license](https://img.shields.io/npm/l/@ninesols/aca-cli)](LICENSE)
 
 [简体中文](README.md) | English
 
@@ -21,7 +21,7 @@ Run PowerShell on Windows ECS instances, deploy or roll back IIS sites and Windo
 Requires Node 22.12+.
 
 ```sh
-npm install -g aca-cli
+npm install -g @ninesols/aca-cli
 aca skill install  # the skill for Claude Code and Codex; run it again after upgrading aca
 ```
 
