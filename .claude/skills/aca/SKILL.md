@@ -11,7 +11,7 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
 
 云助手以 SYSTEM 身份执行，用 `aca run` 就等于拿到生产机的管理员 shell，其它命令也都跑在这个权限上。
 
-- 不改站点和服务的直接做：`instances`、`sites`、`services`、`status`、`certs`、`clb`、`pull`、各命令的 `--check`，以及 `aca run` 里只查询不改动的脚本。
+- 不改站点和服务的直接做：`instances`、`sites`、`services`、`status`、`certs`、`certs cloud`、`clb`、`pull`、各命令的 `--check`，以及 `aca run` 里只查询不改动的脚本。
 - 会改服务器的只在用户本轮明确要求时做：`deploy`、`rollback` 按下面的发布流程确认；
   `clb restore` 会让负载均衡重新把请求转给这台服务器，先确认它上面的站点正常，用户同意后再放回；
   `certs replace` 先 `--check`，把每台服务器要换的条目和条目上的站点给用户看，确认后再换；
@@ -50,6 +50,9 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
   `--check` 每台列出要换的 http.sys 条目、条目上的站点（`IP:端口` 条目上的站点会一起换）、旧证书指纹和到期日。
   报 `does not expire later` 多半是拿错了文件，问用户，不要自己加 `-f`。
   某台服务器握手检查不过会自动换回旧证书并停在那台；换完用 `aca certs` 确认。换回旧证书用 `aca certs replace <旧证书指纹> -f`
+- `aca certs cloud` — 数字证书管理服务里没过期的证书：证书 ID、云上的名称、证书名、到期日、剩余天数、状态，最急的排在最前
+- `aca certs replace --from-cloud <证书 ID> [--check]` — 证书在数字证书管理服务里（续期后多半如此）时用这条，
+  aca 取回 PEM 在本机合成 PFX，不用 PFX 文件和 `--password-file`；只支持 RSA 证书，其余和上一条一样
 - `aca rollback <站点或服务> --check` — 列出每台服务器要撤掉哪次发布、恢复/删除多少文件。
   每台服务器要撤的应该是它发布记录里最近一次还没回退的发布；显示 `skipped` 的那台服务器应该没参与那次发布，或已单独回退过它。
   用 `aca status` 只看得到最近 5 条，不够判断就用 `aca run` 读那台服务器上站点目录旁的完整 `<站点目录>.aca-log.txt`。

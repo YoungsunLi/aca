@@ -77,7 +77,7 @@ The keys of `services` are Windows service names (the ones `sc query` lists, not
 
 Credentials are resolved by the Alibaba Cloud SDK's [default credential chain](https://www.alibabacloud.com/help/en/sdk/developer-reference/v2-manage-node-js-access-credentials), shared with the Alibaba Cloud CLI: once you have run `aliyun configure` there is nothing more to set up; you can also set the environment variables `ALIBABA_CLOUD_ACCESS_KEY_ID` and `ALIBABA_CLOUD_ACCESS_KEY_SECRET`, which take precedence over `aliyun configure`.
 
-**RAM permissions**: `ecs:DescribeInstances`, `ecs:RunCommand`, `ecs:DescribeInvocationResults`, `oss:PutObject`, `oss:GetObject`, `oss:ListObjects`, `oss:DeleteObject` (on a versioned bucket, `pull` and `certs replace` need `oss:DeleteObjectVersion` to delete the files they pass through OSS), and `slb:DescribeLoadBalancerAttribute`, `slb:DescribeLoadBalancerListeners`, `slb:DescribeHealthStatus` and `slb:SetBackendServers` for sites with `clb`.
+**RAM permissions**: `ecs:DescribeInstances`, `ecs:RunCommand`, `ecs:DescribeInvocationResults`, `oss:PutObject`, `oss:GetObject`, `oss:ListObjects`, `oss:DeleteObject` (on a versioned bucket, `pull` and `certs replace` need `oss:DeleteObjectVersion` to delete the files they pass through OSS), and `slb:DescribeLoadBalancerAttribute`, `slb:DescribeLoadBalancerListeners`, `slb:DescribeHealthStatus` and `slb:SetBackendServers` for sites with `clb`; taking a certificate from the cloud needs `yundun-cert:ListUserCertificateOrder` and `yundun-cert:GetUserCertificateDetail` (Certificate Management Service authorizes per operation, so the resource can only be `*`).
 
 > [!WARNING]
 > Cloud Assistant runs scripts as SYSTEM: whoever holds this AccessKey, human or agent, is an administrator of every instance `ecs:RunCommand` is granted on. Grant it per instance ID, never `*`.
@@ -109,6 +109,8 @@ aca status "Default Web Site"                   # newest file time, a service's 
 aca certs                                       # certificates the HTTPS bindings of running sites actually serve on each server
 aca certs replace ./a.pfx --password-file ./pw.txt --check  # see which HTTPS bindings each server would switch to this certificate
 aca certs replace ./a.pfx --password-file ./pw.txt  # switch them
+aca certs cloud                                 # unexpired certificates in Certificate Management Service, and their IDs
+aca certs replace --from-cloud 22863954         # switch to that cloud certificate, PFX built by aca
 aca rollback "Default Web Site" --check         # see which deploy each server would roll back
 aca rollback "Default Web Site"                 # roll back the latest deploy
 aca clb "Default Web Site"                      # weight of each server in the CLB
@@ -200,6 +202,7 @@ On every server of the configured sites, aca does a TLS handshake on the server 
 
 On the same servers, aca switches every HTTPS binding that uses a certificate with the same subject name (e.g. `*.a.com`) to this certificate; the old certificates stay on the servers.
 
+- **`--from-cloud <certificate ID>` takes the certificate from Certificate Management Service**: `aca certs cloud` lists the IDs, aca downloads the PEM and builds the PFX on this machine with a password of its own, so no `--password-file`; RSA certificates only.
 - **It switches http.sys binding entries, not sites**: non-SNI bindings share one IP:port entry, so switching one of those sites switches them all; `--check` lists the sites on each entry.
 - **aca switches the servers one at a time**, with a handshake on the server itself for each HTTPS binding of the running sites before and after: every binding that served a certificate with that name must serve the new one afterwards, and one whose host name matched or whose chain the server trusted must still do so; otherwise that server switches back to the old certificates and aca stops there, leaving servers already switched as they are.
 - **Only one `certs replace` at a time can switch certificates on a server**; the lock is an exclusive handle on `%ProgramData%\aca-certs.aca-lock`.

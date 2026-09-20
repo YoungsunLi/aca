@@ -3,7 +3,8 @@ import { cpSync, readFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
-import { checkCerts, replaceCert, type ReplaceOptions } from './certs.ts';
+import { cloudSource, listCloudCerts } from './cas.ts';
+import { checkCerts, readSource, replaceCert, type ReplaceOptions } from './certs.ts';
 import { isWeight, siteClb } from './clb.ts';
 import { getSite, getTarget, loadConfig, targetVars } from './config.ts';
 import { deploy, type DeployOptions } from './deploy.ts';
@@ -86,12 +87,23 @@ const certs = program.command('certs').description('Show the certificate each HT
     if (failures.length || checks.some((c) => c.status !== 'OK')) process.exitCode = 1;
   });
 
-certs.command('replace <source>').description('On every server of the configured sites, switch every HTTPS binding that uses a certificate with the same name to the source: a PFX file, or the thumbprint of a certificate already on the servers (to switch back)')
+certs.command('cloud').description('List the unexpired certificates in Certificate Management Service, the soonest to expire first; their IDs are what --from-cloud takes')
+  .action(async () => {
+    const list = await listCloudCerts(loadConfig());
+    console.log(['CertificateId', 'Name', 'Certificate', 'Expires', 'Days', 'Status'].join('\t'));
+    for (const c of list) console.log([c.id, c.name, c.common, c.expires, c.days, c.status].join('\t'));
+  });
+
+certs.command('replace [source]').description('On every server of the configured sites, switch every HTTPS binding that uses a certificate with the same name to the source: a PFX file, or the thumbprint of a certificate already on the servers (to switch back)')
+  .option('--from-cloud <id>', 'certificate ID from aca certs cloud: aca downloads its PEM and builds the PFX on this machine instead')
   .option('--password-file <file>', 'file holding the PFX password')
   .option('-c, --check', 'only list the bindings each server would switch')
   .option('-f, --force', 'switch even if the source certificate does not expire later than the one it replaces')
-  .action(async (source: string, opts: ReplaceOptions) => {
-    await reportEach(replaceCert(loadConfig(), source, opts));
+  .action(async (source: string | undefined, opts: ReplaceOptions & { fromCloud?: string; passwordFile?: string }) => {
+    const { fromCloud, passwordFile } = opts;
+    if (fromCloud && (source || passwordFile)) throw new Error('--from-cloud takes no source and no --password-file: aca builds the PFX itself, with a password of its own');
+    const cfg = loadConfig();
+    await reportEach(replaceCert(cfg, fromCloud ? await cloudSource(cfg, fromCloud) : readSource(source, passwordFile), opts));
   });
 
 program.command('rollback <target>').description('Roll back the latest deploy of a site or service: restore the files it overwrote and delete the files it added')

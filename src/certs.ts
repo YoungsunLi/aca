@@ -7,7 +7,8 @@ import { renderScript } from './ps.ts';
 
 /** days：握手不上时没有证书，也就没有剩余天数 */
 type CertCheck ={ instance: string; site: string; binding: string; expires: string; days?: number; name: string; thumbprint: string; status: string };
-export type ReplaceOptions = { passwordFile?: string; check?: boolean; force?: boolean };
+export type CertSource = { kind: 'pfx'; bytes: Buffer; password: string } | { kind: 'thumbprint'; thumbprint: string };
+export type ReplaceOptions = { check?: boolean; force?: boolean };
 
 // 剩不到 30 天就报：留出买证书、逐台换的时间
 const WARN_DAYS = 30;
@@ -46,16 +47,24 @@ export async function checkCerts(cfg: Config): Promise<{ checks: CertCheck[]; fa
   return { checks, failures };
 }
 
-// 逐台换、一台失败就停：那台服务器会自己换回旧证书，已换好的服务器不动
-export async function* replaceCert(cfg: Config, source: string, { passwordFile, check = false, force = false }: ReplaceOptions): AsyncGenerator<[string, RunResult]> {
-  const thumbprint = existsSync(source) ? '' : source.toUpperCase();
-  if (thumbprint && !/^[0-9A-F]{40}$/.test(thumbprint)) throw new Error(`${source} is neither a PFX file nor a certificate thumbprint`);
+export function readSource(source: string | undefined, passwordFile?: string): CertSource {
+  if (!source) throw new Error('Pass a PFX file, the thumbprint of a certificate on the servers, or --from-cloud <certificate ID>');
+  if (!existsSync(source)) {
+    const thumbprint = source.toUpperCase();
+    if (!/^[0-9A-F]{40}$/.test(thumbprint)) throw new Error(`${source} is neither a PFX file nor a certificate thumbprint`);
+    return { kind: 'thumbprint', thumbprint };
+  }
   // 密码从文件读，不出现在命令行和 Agent 的上下文里；去掉编辑器加的 BOM 和末尾换行
   const password = passwordFile ? readFileSync(passwordFile, 'utf8').replace(/^\uFEFF/, '').replace(/[\r\n]+$/, '') : '';
+  return { kind: 'pfx', bytes: readFileSync(source), password };
+}
+
+// 逐台换、一台失败就停：那台服务器会自己换回旧证书，已换好的服务器不动
+export async function* replaceCert(cfg: Config, source: CertSource, { check = false, force = false }: ReplaceOptions): AsyncGenerator<[string, RunResult]> {
   // 私钥不能写进 RunCommand（执行记录里查得到命令内容），只能经 OSS 传。传之前用一次性密钥加密：
   // bucket 被别人读到也拿不到私钥，PFX 自己的密码又常常很弱。密钥和 PFX 密码一样随脚本走
   const key = randomBytes(32);
-  const blob = thumbprint ? undefined : encrypt(readFileSync(source), key);
+  const blob = source.kind === 'pfx' ? encrypt(source.bytes, key) : undefined;
   const objectName = blob ? `${cfg.oss.prefix ?? ''}certs/${randomBytes(8).toString('hex')}.enc` : '';
   let versionId: string | undefined;
   try {
@@ -66,7 +75,9 @@ export async function* replaceCert(cfg: Config, source: string, { passwordFile, 
     const timeout = 1800;
     for (const [i, name] of instances.entries()) {
       const script = renderScript('certreplace', {
-        URL: objectName && await signForEcs(cfg, objectName, 300), KEY: key.toString('base64'), PASSWORD: password, THUMBPRINT: thumbprint, CHECK_ONLY: String(check), FORCE: String(force), TIMEOUT: String(timeout),
+        URL: objectName && await signForEcs(cfg, objectName, 300), KEY: key.toString('base64'),
+        PASSWORD: source.kind === 'pfx' ? source.password : '', THUMBPRINT: source.kind === 'thumbprint' ? source.thumbprint : '',
+        CHECK_ONLY: String(check), FORCE: String(force), TIMEOUT: String(timeout),
       }, ['certcommon']);
       const r = await ecs.runPowerShell(name, script, timeout);
       yield [name, r];
