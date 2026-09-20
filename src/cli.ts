@@ -106,12 +106,12 @@ certs.command('replace [source]').description('On every server of the configured
     await reportEach(replaceCert(cfg, fromCloud ? await cloudSource(cfg, fromCloud) : readSource(source, passwordFile), opts));
   });
 
-program.command('rollback <target>').description('Roll back the latest deploy of a site or service: restore the files it overwrote and delete the files it added')
-  .option('-c, --check', 'only show which backup each server would restore')
-  .action(async (name: string, opts: { check?: boolean }) => {
+program.command('rollback <target> [deploy]').description('Roll back a deploy of a site or service together with every deploy after it, the latest deploy by default: restore the files they overwrote and delete the files they added; deploy is a deploy ID from --check')
+  .option('-c, --check', 'only list the backups each server has, their size, and which of them would be rolled back')
+  .action(async (name: string, deployId: string | undefined, opts: { check?: boolean }) => {
     const cfg = loadConfig();
-    if (opts.check) printPlan(await planRollback(cfg, name));
-    else await reportEach(rollback(cfg, name));
+    if (opts.check) printPlan(await planRollback(cfg, name, deployId));
+    else await reportEach(rollback(cfg, name, deployId));
   });
 
 const clb = program.command('clb <site>').description('Show the weight of each server of the site in the default server group of its CLB')

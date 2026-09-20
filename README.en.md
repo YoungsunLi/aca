@@ -67,7 +67,7 @@ The keys of `sites` are IIS site names; `deploy`, `rollback` and `status` only a
 | `publish` | The publish directory on this machine, used when `deploy` is given no path |
 | `exclude` | Paths in the package (directories or files) that are not deployed: list where the server keeps its own secrets and environment config, and deploys won't overwrite them |
 | `stage` | Names the staging site: this site only takes the package that was the latest successful deploy on the staging site, and not once the staging site has rolled it back; `--skip-stage` skips this requirement. `--from-stage` deploys exactly that package; given a local path, aca compares the zip it would upload, so a rebuild is a different package, and both sides must use the same kind of input: both a directory, or both the same zip file |
-| `keep` | How many backups of the site each server keeps, 5 by default; `rollback` can go back at most that many times |
+| `keep` | How many backups of the site each server keeps, 5 by default; `rollback` can undo at most that many of the latest deploys |
 | `clb` | ID of the Classic Load Balancer (CLB) instance in front of the site: before `deploy` or `rollback` works on each server, aca takes it out of the load balancer; see `aca deploy` |
 | `project`<br>`note` | Only shown by `aca sites` and `aca services`, to help find the right site or service |
 
@@ -86,7 +86,7 @@ Credentials are resolved by the Alibaba Cloud SDK's [default credential chain](h
 
 - **ECS and the OSS bucket are in the same region**; packages are downloaded over the OSS internal network.
 - **Servers need the [Cloud Assistant client](https://www.alibabacloud.com/help/en/ecs/user-guide/install-the-cloud-assistant-agent#775c8cd747xcj)** (preinstalled on servers created from public images since December 2017).
-- **Cloud Assistant returns output in the server's ANSI code page**: characters outside it (e.g. Chinese on English Windows) in site names, paths and `-m` notes turn into question marks, and `rollback` fails if the directory path contains any.
+- **Cloud Assistant returns output in the server's ANSI code page**: characters outside it (e.g. Chinese on English Windows) in site names, paths and `-m` notes turn into question marks.
 - **A site or service directory must be a plain directory on a local drive**, not a drive root or a UNC path, and not nested inside another target's directory: backups and the deploy log live next to it.
 - **The `<root>.bak-<time>` backups and `<root>.aca-*` files next to that directory are aca's state; don't delete them by hand**: without the latest backup, `rollback` skips that deploy and restores a mix that was never deployed.
 - **After a deploy the site and its app pool are started**, even if they had been stopped by hand; a service is the opposite: one stopped before the deploy is left stopped, since on a standby server a service is often stopped on purpose.
@@ -111,8 +111,9 @@ aca certs replace ./a.pfx --password-file ./pw.txt --check  # see which HTTPS bi
 aca certs replace ./a.pfx --password-file ./pw.txt  # switch them
 aca certs cloud                                 # unexpired certificates in Certificate Management Service, and their IDs
 aca certs replace --from-cloud 22863954         # switch to that cloud certificate, PFX built by aca
-aca rollback "Default Web Site" --check         # see which deploy each server would roll back
+aca rollback "Default Web Site" --check         # the backups each server still has, their size, and which deploys would be undone
 aca rollback "Default Web Site"                 # roll back the latest deploy
+aca rollback "Default Web Site" 20260918T020100Z  # roll back that deploy and every deploy after it
 aca clb "Default Web Site"                      # weight of each server in the CLB
 aca clb restore "Default Web Site" web1         # put web1, taken out earlier, back into the load balancer
 ```
@@ -173,8 +174,8 @@ Services use the same commands and the same backup and rollback machinery as sit
 
 Whether you undo this deploy or fix it and deploy again, first run `aca rollback <site> --check`:
 
-- if it would roll back this deploy (the deploy ID is its start time in UTC), roll back first;
-- if it shows an earlier deploy, no server got this one and there is nothing to roll back.
+- if `undo` marks this deploy (the deploy ID is its start time in UTC), roll back first;
+- if it marks an earlier deploy, no server got this one and there is nothing to roll back.
 
 > [!WARNING]
 > If you deploy again without rolling back first, the servers that got this deploy back up its files, so a rollback afterwards only takes them back to this deploy, not to the version before it.
@@ -183,7 +184,13 @@ Whether you undo this deploy or fix it and deploy again, first run `aca rollback
 
 ### `aca rollback`
 
-aca restores the latest backup, deletes the files that deploy added, restarts the site or service, then deletes that backup; rolling back again goes to the deploy before it. If a service that was running doesn't come back up, the version rolled back to doesn't start either: aca reports an error, the service stays stopped on that server, and the remaining servers are left alone. Look into that server first: the backup it used is already gone, so running `aca rollback` again skips it and only takes the other servers to the same version. For a site with `clb`, aca takes each server out of the load balancer before rolling it back, just as for a deploy, and rolls back servers already left out first; when taking out the next one would leave no server taking traffic, aca reports an error and stops: put the rolled-back server back with `aca clb restore`, then roll back again.
+On each server, aca restores the files a deploy overwrote, deletes the files it added, restarts the site or service, then deletes the backup it used. Without a deploy ID it rolls back the latest deploy only; rolling back again undoes the one before it.
+
+- **`--check` lists the backups each server still has**, newest first: the deploy ID, how many files it would restore and delete, and its size, followed by that deploy's line in the deploy log (time, outcome, `-m` note). `undo` marks the ones this rollback would undo, `keep` the ones it leaves alone; a server with nothing to undo is marked `skipped`, most likely because those deploys never reached it.
+- **Given a deploy ID, aca undoes that deploy and every deploy after it in one go**, back to the version before that deploy. Backups stack on top of each other, so one in the middle can't be undone alone; each server stops only once, and the versions in between are never started.
+- **The version before the oldest backup is as far back as it goes**; anything earlier takes redeploying an older build. If a server has already pruned a backup the rollback needs, aca reports an error and rolls back no server.
+- **If a service that was running doesn't come back up**, the version rolled back to doesn't start either: aca reports an error, the service stays stopped on that server, and the remaining servers are left alone. Look into that server first: the backups it used are already gone, so rolling back again skips it and only takes the other servers to the same version.
+- **For a site with `clb`, aca takes each server out of the load balancer before rolling it back**, just as for a deploy, and rolls back servers already left out first; when taking out the next one would leave no server taking traffic, aca reports an error and stops: put the rolled-back server back with `aca clb restore`, then roll back again.
 
 ### `aca clb`
 

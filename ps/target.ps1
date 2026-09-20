@@ -16,7 +16,7 @@ function Get-AcaServiceRoot($name, $dir) {
   if (-not $svc[0].PathName.TrimStart('"').StartsWith($root + '\', 'OrdinalIgnoreCase')) { throw "Service $name runs $($svc[0].PathName), which is not inside $root; wrong dir for this service in the aca config?" }
   $root
 }
-# 带 aca-manifest.txt 的才是 aca 建的；.trash- 是清理时改了名、等着删的旧备份。名字里带时间，按名字排就是从旧到新。
+# 带 aca-manifest.txt 的才是 aca 建的；.trash- 是清理掉或回退用掉之后改了名、等着删的备份。名字里带时间，按名字排就是从旧到新。
 # 名字要整个对上：旁边若有站点目录叫 <leaf>.bak-xxx，它的备份也会被 -Filter 匹配到
 function Get-AcaBackups($root, $kind = 'bak') {
   $prefix = (Split-Path $root -Leaf) + ".$kind-"
@@ -26,7 +26,6 @@ function Get-AcaBackups($root, $kind = 'bak') {
 }
 # 只留最近 $keep 份备份，$backup 是刚做的那份
 function Remove-AcaOldBackups($root, $backup, $keep) {
-  $leaf = Split-Path $root -Leaf
   # 刚做的这份单独留着：服务器时间往回调过的话，按名字排它不一定在最后
   $baks = @(Get-AcaBackups $root | Where-Object { $_.FullName -ne $backup })
   for ($i = 0; $i -lt $baks.Count - ($keep - 1); $i++) {
@@ -34,8 +33,7 @@ function Remove-AcaOldBackups($root, $backup, $keep) {
     try {
       # 回退计划靠它分辨某台服务器缺的备份是被清理了，还是这台服务器没参与那次发布；只追加，写的时候被杀也丢不了之前的记录
       Add-Content -LiteralPath "$root.aca-pruned" -Value @(Get-Content -LiteralPath (Join-Path $b.FullName 'aca-manifest.txt'))[0]
-      # 改名是原子的：改完就不再是备份，后面删到一半失败也不会被拿去回退
-      Rename-Item -LiteralPath $b.FullName -NewName "$leaf.trash-$($b.Name -replace '^.*\.bak-')"
+      Move-AcaBackupToTrash $b.FullName
       "Removed old backup $($b.FullName)"
     } catch {
       # 留着更旧的却删掉较新的，回退链会断档，所以失败就停，下次发布再从这份删起
@@ -43,13 +41,20 @@ function Remove-AcaOldBackups($root, $backup, $keep) {
       break
     }
   }
-  # 这次改名的和以前没删干净的一起删；清单留到最后，删到一半失败时下次还认得出是 aca 的
+  Clear-AcaTrash $root
+}
+# 改名是原子的：改完就不再是备份，后面删到一半失败也不会被拿去回退
+function Move-AcaBackupToTrash($backup) {
+  Rename-Item -LiteralPath $backup -NewName ((Split-Path $backup -Leaf) -replace '\.bak-(?=[^.]*$)', '.trash-')
+}
+# 这次改名的和以前没删干净的一起删；清单留到最后，删到一半失败时下次还认得出是 aca 的
+function Clear-AcaTrash($root) {
   Get-AcaBackups $root 'trash' | ForEach-Object {
     $d = $_.FullName
     try {
       Get-ChildItem -LiteralPath $d -Force | Where-Object { $_.Name -ne 'aca-manifest.txt' } | Remove-Item -Recurse -Force
       Remove-Item -LiteralPath $d -Recurse -Force
-    } catch { "WARN: $d not fully deleted, will retry on the next deploy: $($_.Exception.Message)" }
+    } catch { "WARN: $d not fully deleted, will retry on the next deploy or rollback: $($_.Exception.Message)" }
   }
 }
 function Copy-AcaFile($src, $dst) {
