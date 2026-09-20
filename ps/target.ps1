@@ -16,6 +16,10 @@ function Get-AcaServiceRoot($name, $dir) {
   if (-not $svc[0].PathName.TrimStart('"').StartsWith($root + '\', 'OrdinalIgnoreCase')) { throw "Service $name runs $($svc[0].PathName), which is not inside $root; wrong dir for this service in the aca config?" }
   $root
 }
+# exclude 里的路径是服务器上自己维护的，发布不覆盖它们，比对也不比
+function Test-AcaExcluded($rel, $exclude) {
+  [bool]@($exclude | Where-Object { $rel -eq $_ -or $rel.StartsWith($_ + '\', 'OrdinalIgnoreCase') })
+}
 # 带 aca-manifest.txt 的才是 aca 建的；.trash- 是清理掉或回退用掉之后改了名、等着删的备份。名字里带时间，按名字排就是从旧到新。
 # 名字要整个对上：旁边若有站点目录叫 <leaf>.bak-xxx，它的备份也会被 -Filter 匹配到
 function Get-AcaBackups($root, $kind = 'bak') {

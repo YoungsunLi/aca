@@ -1,6 +1,6 @@
 ---
 name: aca
-description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发布到 IIS、把程序发布到 Windows 服务。当用户要求列出服务器、在服务器上执行 PowerShell、看服务器上的日志或拉取文件、查当前版本、查或换 SSL 证书、或发布/回退 IIS 站点和 Windows 服务时使用。
+description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发布到 IIS、把程序发布到 Windows 服务。当用户要求列出服务器、在服务器上执行 PowerShell、看服务器上的日志或拉取文件、查当前版本、比对几台服务器上的文件、查或换 SSL 证书、或发布/回退 IIS 站点和 Windows 服务时使用。
 ---
 
 # aca：阿里云 ECS / IIS 与 Windows 服务发布
@@ -11,7 +11,7 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
 
 云助手以 SYSTEM 身份执行，用 `aca run` 就等于拿到生产机的管理员 shell，其它命令也都跑在这个权限上。
 
-- 不改站点和服务的直接做：`instances`、`sites`、`services`、`status`、`certs`、`certs cloud`、`clb`、`pull`、各命令的 `--check`，以及 `aca run` 里只查询不改动的脚本。
+- 不改站点和服务的直接做：`instances`、`sites`、`services`、`status`、`diff`、`certs`、`certs cloud`、`clb`、`pull`、各命令的 `--check`，以及 `aca run` 里只查询不改动的脚本。
 - 会改服务器的只在用户本轮明确要求时做：`deploy`、`rollback` 按下面的发布流程确认；
   `clb restore` 会让负载均衡重新把请求转给这台服务器，先确认它上面的站点正常，用户同意后再放回；
   `certs replace` 先 `--check`，把每台服务器要换的条目和条目上的站点给用户看，确认后再换；
@@ -43,6 +43,13 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
   尽量填提交范围或分支。服务没有预发布，`--from-stage` 用在服务上会报错
 - `aca deploy <站点> --from-stage [--check] [-m "<说明>"]` — 直接发预发布站（配置里的 `stage`）最近一次成功发布的那个包，不用本地路径
 - `aca status <站点或服务>` — 每台服务器上最新的文件时间、服务的运行状态和最近 5 条 aca 发布/回退记录，回答"现在跑的是哪一版"
+- `aca diff <站点或服务> [目录或文件]` — 按内容哈希比对每台服务器上的文件，站点刷新几次好一次坏一次、某台服务器行为和别的不一样时用它。
+  每行是一个不一样的文件，后面按内容分组列出服务器（`web1,web2=<哈希前 8 位> <最后写入时间>`，没有这个文件的是 `missing`），
+  有差异时退出码非 0。差异超过 50 个时，列完前 50 个再按目录汇总，跟着它的提示加上目录再比一次，比如 `aca diff "站点" bin`；
+  站点目录里常有日志、上传文件这类各台本来就不同的东西，先比 `bin` 往往就够判断是不是发布漂移。
+  配置里 `exclude` 的路径不比，服务只比 dll 和 exe。
+  差异多半是某台漏发或有人手改过，对照 `aca status` 的发布记录判断哪台是旧的，让用户确认后重发一次把它补齐。
+  正发着这个站点时比出来的是发布到一半的样子；每台服务器要把目录整个读一遍，几 GB 的目录要几分钟
 - `aca certs` — 登记站点所在的每台服务器上，运行中站点的每个 https 绑定实际发出的证书：实例、站点、绑定、到期日、剩余天数、证书名、指纹、状态，
   握手不上的和剩余天数最少的排在最前。状态不是 `OK` 时退出码非 0：`expired`、`expiring`（30 天内到期）、
   `name mismatch`（证书不含这个域名，浏览器会报错）、`handshake failed`（连接被重置多半是这个绑定用的证书已从服务器上删掉）

@@ -75,6 +75,15 @@ export function loadConfig(): Config {
   return { region, oss, instances, sites, services, credential: newCredential() };
 }
 
+/**
+ * 规范成服务器上的 Windows 相对路径，不是就返回空：服务器端按这个形式做前缀匹配，
+ * 带 . 和 .. 的写法匹配不上会悄悄失效，绝对路径指到目标目录外面去
+ */
+export function relativePath(p: string): string {
+  const n = win32.normalize(p).replace(/^\\+|\\+$/g, '');
+  return !n || n === '.' || n === '..' || n.startsWith('..\\') || win32.isAbsolute(n) ? '' : n;
+}
+
 function checkDeployable(file: string, what: string, d: Deployable, aliases: Record<string, string>) {
   if (!d.instances?.length) throw new Error(`${file}: ${what} has no instances`);
   const bad = d.instances.find((i) => !Object.hasOwn(aliases, i) && !i.startsWith('i-'));
@@ -85,8 +94,8 @@ function checkDeployable(file: string, what: string, d: Deployable, aliases: Rec
     // 服务器端按 Windows 相对路径做前缀匹配，统一成 bin\Res 的形式；带 . 和 .. 的写法匹配不上会悄悄失效。
     // 排序是因为包 ID 要算进 exclude，写的顺序不同也得是同一个 ID
     d.exclude = d.exclude.map((p) => {
-      const n = win32.normalize(p).replace(/^\\+|\\+$/g, '');
-      if (!n || n === '.' || n === '..' || n.startsWith('..\\') || win32.isAbsolute(n)) throw new Error(`${file}: exclude "${p}" of ${what} is not a relative path inside the package`);
+      const n = relativePath(p);
+      if (!n) throw new Error(`${file}: exclude "${p}" of ${what} is not a relative path inside the package`);
       return n;
     }).sort();
   }

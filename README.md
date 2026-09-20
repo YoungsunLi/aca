@@ -77,7 +77,7 @@ aca skill install  # 给 Claude Code、Codex 装上 skill，升级 aca 后再跑
 
 凭证按阿里云 SDK 的[默认凭证链](https://help.aliyun.com/zh/sdk/developer-reference/v2-manage-node-js-access-credentials)查找，和阿里云 CLI 共用：`aliyun configure` 配过就不用再配，也可以设环境变量 `ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET`，两处都配了时环境变量优先。
 
-**RAM 权限**：`ecs:DescribeInstances`、`ecs:RunCommand`、`ecs:DescribeInvocationResults`、`oss:PutObject`、`oss:GetObject`、`oss:ListObjects`、`oss:DeleteObject`（bucket 开了版本控制时，`pull` 和 `certs replace` 删 OSS 上中转的文件要 `oss:DeleteObjectVersion`），站点配了 `clb` 还要 `slb:DescribeLoadBalancerAttribute`、`slb:DescribeLoadBalancerListeners`、`slb:DescribeHealthStatus`、`slb:SetBackendServers`，取云端证书要 `yundun-cert:ListUserCertificateOrder`、`yundun-cert:GetUserCertificateDetail`（数字证书管理服务只支持操作级授权，资源只能写 `*`）。
+**RAM 权限**：`ecs:DescribeInstances`、`ecs:RunCommand`、`ecs:DescribeInvocationResults`、`oss:PutObject`、`oss:GetObject`、`oss:ListObjects`、`oss:DeleteObject`（bucket 开了版本控制时，`pull`、`diff` 和 `certs replace` 删 OSS 上中转的文件要 `oss:DeleteObjectVersion`），站点配了 `clb` 还要 `slb:DescribeLoadBalancerAttribute`、`slb:DescribeLoadBalancerListeners`、`slb:DescribeHealthStatus`、`slb:SetBackendServers`，取云端证书要 `yundun-cert:ListUserCertificateOrder`、`yundun-cert:GetUserCertificateDetail`（数字证书管理服务只支持操作级授权，资源只能写 `*`）。
 
 > [!WARNING]
 > 云助手以 SYSTEM 身份执行脚本，`ecs:RunCommand` 授权到哪些实例，持有这份 AccessKey 的人和 Agent 就是哪些实例的管理员，按实例 ID 授权，不要给 `*`。
@@ -106,6 +106,8 @@ aca deploy "Default Web Site" ./publish -m "release-2026-09"  # 目录或 zip；
 aca deploy "Default Web Site" --from-stage -m "release-2026-09"  # 直接发预发布站最近一次发布的那个包
 aca deploy MyApp.Worker ./publish -m "release-2026-09"  # 发 Windows 服务，参数和站点一样
 aca status "Default Web Site"                   # 每台服务器上最新的文件时间、服务的运行状态和最近 5 条发布/回退记录
+aca diff "Default Web Site"                     # 按内容哈希比对每台服务器上的文件，列出不一样的
+aca diff "Default Web Site" bin                 # 只比站点目录下的一个目录
 aca certs                                       # 每台服务器上运行中站点的 https 绑定实际发出的证书
 aca certs replace ./a.pfx --password-file ./pw.txt --check  # 看每台服务器会把哪些 https 绑定换成这张证书
 aca certs replace ./a.pfx --password-file ./pw.txt  # 换证书
@@ -134,6 +136,18 @@ aca 把服务器上的一个文件拉到本机，不受云助手输出上限的�
 
 - **本地路径默认是当前目录下的同名文件**，给的是已有目录就放进这个目录；本机已有这个文件时 aca 报错，不覆盖。
 - **文件经 OSS 中转**：服务器用 aca 这次生成的一次性密钥加密后上传，aca 下载解密后就删掉 OSS 上的这份；密钥留在云助手的执行记录里。
+
+### `aca diff`
+
+负载均衡后面几台服务器上的文件不一致时，表现是刷新几次好一次坏一次。`aca diff <站点或服务>` 在每台服务器上按内容算哈希，列出各台不一样的文件。
+
+- **比的是站点目录（服务是配置里的 `dir`）下的全部文件**，`exclude` 里的路径除外：那些是服务器上自己维护的，本来就该不一样；上传目录、日志目录也列进 `exclude` 就不比了。目录联接（junction）不跟进去，隐藏文件比。
+- **服务只比 `.dll` 和 `.exe`**：服务的程序集和它天天写的日志在同一个目录里。
+- **每行一个不一样的文件**，后面按内容分组列出服务器（`web1,web2=<哈希前 8 位> <最后写入时间>`），没有这个文件的服务器是 `missing`；有差异时以非 0 退出。
+- **差异超过 50 个时，列完前 50 个再按目录汇总**，看清楚差异落在哪几个目录，再用 `aca diff <站点> <目录或文件>` 缩小范围，比如 `aca diff "Default Web Site" bin`；这台服务器上没有这个目录就当它里面的文件全缺。
+- **每台服务器要把目录整个读一遍算哈希**，几 GB 的目录要几分钟，超过 30 分钟会被云助手强杀；脚本在服务器上以 `BelowNormal` 优先级跑，抢不过 IIS 的工作进程。
+- **文件清单经 OSS 中转**，和 `aca pull` 一样用一次性密钥加密，比完就删：几千个文件的清单超过云助手的输出上限。
+- **只读，不占租约**：这个站点正发着时比出来的是发布到一半的样子。
 
 ### `aca deploy`
 

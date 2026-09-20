@@ -40,11 +40,8 @@ try {
   [IO.Compression.ZipFile]::ExtractToDirectory("$work\pkg.zip", $new)
   # 包里文件名的 [ ] 会被当通配符，按路径操作的命令都用 -LiteralPath
   $all = @(Get-ChildItem -LiteralPath $new -Recurse -File)
-  # exclude 是服务器自己维护的路径，全量构建的包会带上它们，不能覆盖
-  $files = @($all | Where-Object {
-    $rel = $_.FullName.Substring($new.Length + 1)
-    -not @($exclude | Where-Object { $rel -eq $_ -or $rel.StartsWith($_ + '\', 'OrdinalIgnoreCase') })
-  })
+  # 全量构建的包会带上 exclude 里的文件，不能覆盖
+  $files = @($all | Where-Object { -not (Test-AcaExcluded $_.FullName.Substring($new.Length + 1) $exclude) })
   if ($files.Count -lt $all.Count) { "Excluded $($all.Count - $files.Count) files ($($exclude -join ', '))" }
   if (-not $files) { throw 'Package is empty' }
   $rels = @($files | ForEach-Object { $_.FullName.Substring($new.Length + 1) })

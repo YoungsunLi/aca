@@ -6,8 +6,9 @@ import { Command } from 'commander';
 import { cloudSource, listCloudCerts } from './cas.ts';
 import { checkCerts, readSource, replaceCert, type ReplaceOptions } from './certs.ts';
 import { isWeight, siteClb } from './clb.ts';
-import { getSite, getTarget, loadConfig, targetVars } from './config.ts';
+import { getSite, getTarget, loadConfig, relativePath, targetVars } from './config.ts';
 import { deploy, type DeployOptions } from './deploy.ts';
+import { diff, printDiff } from './diff.ts';
 import { Ecs, type RunResult } from './ecs.ts';
 import { targetLease } from './lease.ts';
 import { renderScript } from './ps.ts';
@@ -76,6 +77,13 @@ program.command('status <target>').description('Show what each server is running
       console.log(`== ${instance}`);
       report(await ecs.runPowerShell(instance, renderScript('status', targetVars(name, target), ['target']), 120));
     }
+  });
+
+program.command('diff <target> [path]').description('Compare the files of a site or service across its servers by content hash and list the ones that differ; path narrows the comparison to one directory or file under it; exits non-zero if any differ')
+  .action(async (name: string, path: string | undefined) => {
+    const sub = path ? relativePath(path) : '';
+    if (path && !sub) throw new Error(`"${path}" is not a relative path inside the directory of ${name}`);
+    if (!printDiff(await diff(loadConfig(), name, sub))) process.exitCode = 1;
   });
 
 const certs = program.command('certs').description('Show the certificate each HTTPS binding of the running sites serves on every server of the configured sites, most urgent first; exits non-zero if one is expired, expires within 30 days, does not match its host name or fails the handshake')

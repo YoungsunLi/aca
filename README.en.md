@@ -77,7 +77,7 @@ The keys of `services` are Windows service names (the ones `sc query` lists, not
 
 Credentials are resolved by the Alibaba Cloud SDK's [default credential chain](https://www.alibabacloud.com/help/en/sdk/developer-reference/v2-manage-node-js-access-credentials), shared with the Alibaba Cloud CLI: once you have run `aliyun configure` there is nothing more to set up; you can also set the environment variables `ALIBABA_CLOUD_ACCESS_KEY_ID` and `ALIBABA_CLOUD_ACCESS_KEY_SECRET`, which take precedence over `aliyun configure`.
 
-**RAM permissions**: `ecs:DescribeInstances`, `ecs:RunCommand`, `ecs:DescribeInvocationResults`, `oss:PutObject`, `oss:GetObject`, `oss:ListObjects`, `oss:DeleteObject` (on a versioned bucket, `pull` and `certs replace` need `oss:DeleteObjectVersion` to delete the files they pass through OSS), and `slb:DescribeLoadBalancerAttribute`, `slb:DescribeLoadBalancerListeners`, `slb:DescribeHealthStatus` and `slb:SetBackendServers` for sites with `clb`; taking a certificate from the cloud needs `yundun-cert:ListUserCertificateOrder` and `yundun-cert:GetUserCertificateDetail` (Certificate Management Service authorizes per operation, so the resource can only be `*`).
+**RAM permissions**: `ecs:DescribeInstances`, `ecs:RunCommand`, `ecs:DescribeInvocationResults`, `oss:PutObject`, `oss:GetObject`, `oss:ListObjects`, `oss:DeleteObject` (on a versioned bucket, `pull`, `diff` and `certs replace` need `oss:DeleteObjectVersion` to delete the files they pass through OSS), and `slb:DescribeLoadBalancerAttribute`, `slb:DescribeLoadBalancerListeners`, `slb:DescribeHealthStatus` and `slb:SetBackendServers` for sites with `clb`; taking a certificate from the cloud needs `yundun-cert:ListUserCertificateOrder` and `yundun-cert:GetUserCertificateDetail` (Certificate Management Service authorizes per operation, so the resource can only be `*`).
 
 > [!WARNING]
 > Cloud Assistant runs scripts as SYSTEM: whoever holds this AccessKey, human or agent, is an administrator of every instance `ecs:RunCommand` is granted on. Grant it per instance ID, never `*`.
@@ -106,6 +106,8 @@ aca deploy "Default Web Site" ./publish -m "release-2026-09"  # directory or zip
 aca deploy "Default Web Site" --from-stage -m "release-2026-09"  # deploy the package the staging site last deployed
 aca deploy MyApp.Worker ./publish -m "release-2026-09"  # deploy a Windows service, same options as a site
 aca status "Default Web Site"                   # newest file time, a service's state + last 5 deploy/rollback entries of each server
+aca diff "Default Web Site"                     # compare the files on every server by content hash and list the ones that differ
+aca diff "Default Web Site" bin                 # compare one directory under the site directory only
 aca certs                                       # certificates the HTTPS bindings of running sites actually serve on each server
 aca certs replace ./a.pfx --password-file ./pw.txt --check  # see which HTTPS bindings each server would switch to this certificate
 aca certs replace ./a.pfx --password-file ./pw.txt  # switch them
@@ -134,6 +136,18 @@ aca copies a file from a server to this machine, free of the Cloud Assistant out
 
 - **The local path defaults to a file of the same name in the current directory**; given an existing directory, the file goes into it. If the local file already exists, aca refuses to overwrite it.
 - **The file goes through OSS**: the server encrypts it with a one-time key aca generates for this pull before uploading; aca downloads and decrypts it, then deletes it from OSS. The key stays in the Cloud Assistant invocation history.
+
+### `aca diff`
+
+When the servers behind a load balancer hold different files, the site works on one refresh and fails on the next. `aca diff <site or service>` hashes the files on every server and lists the ones that are not the same everywhere.
+
+- **It compares every file under the site directory** (for a service, under `dir` from the config), except the paths in `exclude`: those are maintained on the server and are meant to differ. List upload and log directories in `exclude` too and they are skipped as well. Directory junctions are not followed; hidden files are compared.
+- **For a service only `.dll` and `.exe` are compared**: a service keeps its assemblies in the same directory as the logs it writes every day.
+- **One line per file that differs**, followed by the servers grouped by content (`web1,web2=<first 8 hash characters> <last write time>`); a server without the file shows `missing`. aca exits non-zero when any differ.
+- **Beyond 50 differing files, the first 50 are followed by a per-directory summary**: see which directories they fall into, then narrow the comparison with `aca diff <site> <directory or file>`, for example `aca diff "Default Web Site" bin`. A server without that directory counts as missing every file in it.
+- **Every server reads its whole directory to hash it**, which takes minutes on a directory of a few GB, and Cloud Assistant kills the script after 30 minutes. The script runs at `BelowNormal` priority so it loses the CPU to the IIS worker processes.
+- **The file list goes through OSS**, encrypted with a one-time key like `aca pull` and deleted right after: a list of a few thousand files exceeds the Cloud Assistant output limit.
+- **Read-only, and it takes no lease**: run during a deploy of this site, it reports the half-deployed state.
 
 ### `aca deploy`
 
