@@ -77,11 +77,11 @@ program.command('status <target>').description('Show what each server is running
     }
   });
 
-const certs = program.command('certs').description('Show the certificate each HTTPS binding of the running sites serves on every server of the configured sites; exits non-zero if one is expired, expires within 30 days, does not match its host name or fails the handshake')
+const certs = program.command('certs').description('Show the certificate each HTTPS binding of the running sites serves on every server of the configured sites, most urgent first; exits non-zero if one is expired, expires within 30 days, does not match its host name or fails the handshake')
   .action(async () => {
     const { checks, failures } = await checkCerts(loadConfig());
-    console.log(['Instance', 'Site', 'Binding', 'Expires', 'Certificate', 'Thumbprint', 'Status'].join('\t'));
-    for (const c of checks) console.log([c.instance, c.site, c.binding, c.expires, c.name, c.thumbprint, c.status].join('\t'));
+    console.log(['Instance', 'Site', 'Binding', 'Expires', 'Days', 'Certificate', 'Thumbprint', 'Status'].join('\t'));
+    for (const c of checks) console.log([c.instance, c.site, c.binding, c.expires, c.days ?? '-', c.name, c.thumbprint, c.status].join('\t'));
     for (const f of failures) console.error(f);
     if (failures.length || checks.some((c) => c.status !== 'OK')) process.exitCode = 1;
   });

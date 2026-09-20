@@ -43,9 +43,9 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
   尽量填提交范围或分支。服务没有预发布，`--from-stage` 用在服务上会报错
 - `aca deploy <站点> --from-stage [--check] [-m "<说明>"]` — 直接发预发布站（配置里的 `stage`）最近一次成功发布的那个包，不用本地路径
 - `aca status <站点或服务>` — 每台服务器上最新的文件时间、服务的运行状态和最近 5 条 aca 发布/回退记录，回答"现在跑的是哪一版"
-- `aca certs` — 登记站点所在的每台服务器上，运行中站点的每个 https 绑定实际发出的证书：实例、站点、绑定、到期日、证书名、指纹、状态。
-  状态不是 `OK` 时退出码非 0：`expired`、`expires in N days`（30 天内）、`name mismatch`（证书不含这个域名，浏览器会报错）、
-  `handshake failed`（连接被重置多半是这个绑定用的证书已从服务器上删掉）
+- `aca certs` — 登记站点所在的每台服务器上，运行中站点的每个 https 绑定实际发出的证书：实例、站点、绑定、到期日、剩余天数、证书名、指纹、状态，
+  握手不上的和剩余天数最少的排在最前。状态不是 `OK` 时退出码非 0：`expired`、`expiring`（30 天内到期）、
+  `name mismatch`（证书不含这个域名，浏览器会报错）、`handshake failed`（连接被重置多半是这个绑定用的证书已从服务器上删掉）
 - `aca certs replace <pfx> --password-file <文件> [--check]` — 在同一批服务器上，把用着同名证书的 https 绑定全部换成这张证书。
   `--check` 每台列出要换的 http.sys 条目、条目上的站点（`IP:端口` 条目上的站点会一起换）、旧证书指纹和到期日。
   报 `does not expire later` 多半是拿错了文件，问用户，不要自己加 `-f`。

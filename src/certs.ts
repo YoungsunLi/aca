@@ -5,7 +5,8 @@ import { Ecs, type RunResult } from './ecs.ts';
 import { remove, signForEcs, upload } from './oss.ts';
 import { renderScript } from './ps.ts';
 
-type CertCheck ={ instance: string; site: string; binding: string; expires: string; name: string; thumbprint: string; status: string };
+/** days：握手不上时没有证书，也就没有剩余天数 */
+type CertCheck ={ instance: string; site: string; binding: string; expires: string; days?: number; name: string; thumbprint: string; status: string };
 export type ReplaceOptions = { passwordFile?: string; check?: boolean; force?: boolean };
 
 // 剩不到 30 天就报：留出买证书、逐台换的时间
@@ -35,11 +36,13 @@ export async function checkCerts(cfg: Config): Promise<{ checks: CertCheck[]; fa
       const days = Number(daysLeft);
       const problems = [];
       if (days < 0) problems.push('expired');
-      else if (days < WARN_DAYS) problems.push(`expires in ${days} days`);
+      else if (days < WARN_DAYS) problems.push('expiring');
       if (nameOk === 'False') problems.push('name mismatch');
-      checks.push({ instance, site, binding, expires, name, thumbprint, status: problems.join('; ') || 'OK' });
+      checks.push({ instance, site, binding, expires, days, name, thumbprint, status: problems.join('; ') || 'OK' });
     }
   }
+  // 最急的排在最前：握手不上的先看，再按剩余天数
+  checks.sort((a, b) => (a.days ?? Number.MIN_SAFE_INTEGER) - (b.days ?? Number.MIN_SAFE_INTEGER));
   return { checks, failures };
 }
 

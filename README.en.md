@@ -191,7 +191,7 @@ Run `aca clb <site>` to list the weight of each server of the site in the defaul
 
 ### `aca certs`
 
-On every server of the configured sites, aca does a TLS handshake on the server itself for each HTTPS binding of every running site and lists the certificate actually served; sites missing from the config are checked too, stopped sites are not.
+On every server of the configured sites, aca does a TLS handshake on the server itself for each HTTPS binding of every running site and lists the certificate actually served with the days it has left, failed handshakes and the soonest to expire first; sites missing from the config are checked too, stopped sites are not.
 
 - **Exits non-zero** if a certificate is expired, expires within 30 days, doesn't cover the binding's host name (`*.a.com` doesn't cover `x.y.a.com`) or the handshake fails, so it can run as a scheduled task.
 - **It reports what the handshake returns, not the IIS configuration**: once the certificate of an SNI binding is deleted, http.sys serves the certificate of the non-SNI binding on the same port instead, or drops the connection if there is none, while IIS still shows the old certificate.
