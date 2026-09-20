@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { hostname, userInfo } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { type Config, getSite } from './config.ts';
+import { type Config, getTarget } from './config.ts';
 import { list, readJson, remove, upload } from './oss.ts';
 
 /** 别人超过这么久没见着续约就把租约抢走 */
@@ -25,14 +25,14 @@ const since = (s: Stamp) => Math.max(performance.now() - s.mono, Date.now() - s.
 export type Lease = { check(): void; release(): Promise<void> };
 
 /** 发布、回退整轮持有；站点配了 `clb` 的连 CLB 一起持有，同一个 CLB 上别的站点得排队 */
-export async function siteLease(cfg: Config, site: string, what: string): Promise<Lease> {
+export async function targetLease(cfg: Config, name: string, what: string): Promise<Lease> {
   const held: Lease[] = [];
   try {
-    // 先站点后 CLB，顺序固定：两个 aca 各拿到一个再互等就是死锁
-    // 统一小写：IIS 站点名不分大小写，两份配置写成 App 和 app 就会各拿各的租约
-    held.push(await acquire(cfg, `site/${encodeURIComponent(site.toLowerCase())}`, what));
-    const { clb } = getSite(cfg, site);
-    if (clb) held.push(await acquire(cfg, `clb/${clb}`, what));
+    // 先目标后 CLB，顺序固定：两个 aca 各拿到一个再互等就是死锁
+    // 统一小写：IIS 站点名和服务名都不分大小写，两份配置写成 App 和 app 就会各拿各的租约
+    const target = getTarget(cfg, name);
+    held.push(await acquire(cfg, `${target.kind}/${encodeURIComponent(name.toLowerCase())}`, what));
+    if (target.kind === 'site' && target.clb) held.push(await acquire(cfg, `clb/${target.clb}`, what));
   } catch (e) {
     await release(held);
     throw e;

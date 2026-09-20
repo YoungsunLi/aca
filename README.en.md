@@ -10,7 +10,7 @@
 
 </div>
 
-Run PowerShell on Windows ECS instances, deploy or roll back IIS sites, and check or replace their SSL certificates through Alibaba Cloud [Cloud Assistant](https://www.alibabacloud.com/help/en/ecs/user-guide/overview-10).
+Run PowerShell on Windows ECS instances, deploy or roll back IIS sites and Windows services, and check or replace their SSL certificates through Alibaba Cloud [Cloud Assistant](https://www.alibabacloud.com/help/en/ecs/user-guide/overview-10).
 
 - **Nothing to install and no ports to open on the servers**, just an AccessKey.
 - **Plain-text output** with non-zero exit codes on failure.
@@ -47,11 +47,19 @@ Write a config at `~/.aca/config.json`, or point the `ACA_CONFIG` environment va
       "note": "production"
     },
     "Default Web Site TEST": { "instances": ["web1"], "publish": "D:\\Publish\\MyApp", "exclude": ["web.config", "bin/Res"] }
+  },
+  "services": {
+    "MyApp.Worker": {
+      "instances": ["web1", "web2"],
+      "publish": "D:\\Publish\\Worker",
+      "dir": "D:\\Services\\Worker",
+      "exclude": ["MyApp.Worker.exe.config"]
+    }
   }
 }
 ```
 
-The keys of `sites` are IIS site names; `deploy` only accepts sites registered here. Every field except `instances` is optional:
+The keys of `sites` are IIS site names; `deploy`, `rollback` and `status` only accept sites registered here and the services registered in `services` below. Every field except `instances` is optional:
 
 | Field | Description |
 | --- | --- |
@@ -61,7 +69,9 @@ The keys of `sites` are IIS site names; `deploy` only accepts sites registered h
 | `stage` | Names the staging site: this site only takes the package that was the latest successful deploy on the staging site, and not once the staging site has rolled it back; `--skip-stage` skips this requirement. `--from-stage` deploys exactly that package; given a local path, aca compares the zip it would upload, so a rebuild is a different package, and both sides must use the same kind of input: both a directory, or both the same zip file |
 | `keep` | How many backups of the site each server keeps, 5 by default; `rollback` can go back at most that many times |
 | `clb` | ID of the Classic Load Balancer (CLB) instance in front of the site: before `deploy` or `rollback` works on each server, aca takes it out of the load balancer; see `aca deploy` |
-| `project`<br>`note` | Only shown by `aca sites`, to help find the right site |
+| `project`<br>`note` | Only shown by `aca sites` and `aca services`, to help find the right site or service |
+
+The keys of `services` are Windows service names (the ones `sc query` lists, not the display names). The fields are the same as for a site, without `stage` and `clb`, plus a required `dir`: the installation directory on the servers; aca checks that the service's executable really is inside it and refuses to deploy otherwise.
 
 ### Credentials and permissions
 
@@ -76,10 +86,10 @@ Credentials are resolved by the Alibaba Cloud SDK's [default credential chain](h
 
 - **ECS and the OSS bucket are in the same region**; packages are downloaded over the OSS internal network.
 - **Servers need the [Cloud Assistant client](https://www.alibabacloud.com/help/en/ecs/user-guide/install-the-cloud-assistant-agent#775c8cd747xcj)** (preinstalled on servers created from public images since December 2017).
-- **Cloud Assistant returns output in the server's ANSI code page**: characters outside it (e.g. Chinese on English Windows) in site names, paths and `-m` notes turn into question marks, and `rollback` fails if the site directory path contains any.
-- **The site directory must be a plain directory on a local drive**, not a drive root or a UNC path, and not nested inside another site's directory: backups and the deploy log live next to it.
-- **The `<root>.bak-<time>` backups and `<root>.aca-*` files next to the site directory are aca's state; don't delete them by hand**: without the latest backup, `rollback` skips that deploy and restores a mix that was never deployed.
-- **After a deploy the site and its app pool are started**, even if they had been stopped by hand.
+- **Cloud Assistant returns output in the server's ANSI code page**: characters outside it (e.g. Chinese on English Windows) in site names, paths and `-m` notes turn into question marks, and `rollback` fails if the directory path contains any.
+- **A site or service directory must be a plain directory on a local drive**, not a drive root or a UNC path, and not nested inside another target's directory: backups and the deploy log live next to it.
+- **The `<root>.bak-<time>` backups and `<root>.aca-*` files next to that directory are aca's state; don't delete them by hand**: without the latest backup, `rollback` skips that deploy and restores a mix that was never deployed.
+- **After a deploy the site and its app pool are started**, even if they had been stopped by hand; a service is the opposite: one stopped before the deploy is left stopped, since on a standby server a service is often stopped on purpose.
 - **This machine and the servers must be in the same time zone**: file times in the package are stored as local time, and the check for files older than the copies on the server relies on them.
 - **Packages (`--check` uploads too) stay in OSS under `<prefix>`, named by their SHA-256**; aca doesn't delete them; set up a lifecycle rule on the bucket to expire them, with more days than you take from deploying to the staging site to deploying production with `--from-stage`.
 
@@ -88,12 +98,14 @@ Credentials are resolved by the Alibaba Cloud SDK's [default credential chain](h
 ```sh
 aca instances                                   # list instances
 aca sites                                       # list sites with their project, publish directory and instances
+aca services                                    # list Windows services with their directory on the servers
 aca run web1 "Get-Website | select name,state"  # run any PowerShell as SYSTEM
 aca pull web1 "C:\inetpub\logs\LogFiles\W3SVC1\u_ex260919.log"  # copy a file from a server to the current directory
 aca deploy "Default Web Site" ./publish --check # pre-check only: list the files to overwrite and add, the site keeps running
 aca deploy "Default Web Site" ./publish -m "release-2026-09"  # directory or zip; -m goes into the deploy log
 aca deploy "Default Web Site" --from-stage -m "release-2026-09"  # deploy the package the staging site last deployed
-aca status "Default Web Site"                   # newest file time + last 5 deploy/rollback entries of each server
+aca deploy MyApp.Worker ./publish -m "release-2026-09"  # deploy a Windows service, same options as a site
+aca status "Default Web Site"                   # newest file time, a service's state + last 5 deploy/rollback entries of each server
 aca certs                                       # certificates the HTTPS bindings of running sites actually serve on each server
 aca certs replace ./a.pfx --password-file ./pw.txt --check  # see which HTTPS bindings each server would switch to this certificate
 aca certs replace ./a.pfx --password-file ./pw.txt  # switch them
@@ -122,11 +134,12 @@ aca copies a file from a server to this machine, free of the Cloud Assistant out
 
 ### `aca deploy`
 
-On each server, aca runs: download and extract → pre-check → stop the site → back up the files about to be overwritten to `<root>.bak-<time>` → copy over → start the site → check the home page → delete backups beyond the latest `keep`.
+On each server, aca runs: download and extract → pre-check → stop the site or service → back up the files about to be overwritten to `<root>.bak-<time>` → copy over → start it again → check its state → delete backups beyond the latest `keep`.
 
-- **Deploys are incremental**: whatever is in the package gets overwritten (except `exclude`), so you can ship just a few changed files; uploads, logs and `web.config` already on the site stay untouched, and files removed from the package are not cleaned up.
+- **Deploys are incremental**: whatever is in the package gets overwritten (except `exclude`), so you can ship just a few changed files; uploads, logs and the environment config already in the directory stay untouched, and files removed from the package are not cleaned up.
 - **`--from-stage` deploys the package the staging site last deployed successfully**: aca takes that package from OSS, with no local build and no new upload; once the bucket's lifecycle rule has removed it, aca reports an error, and you deploy the same build from a local path instead.
-- **When the pre-check fails** (source code traces, a `web.config` at the package root, looks like the wrong site, not enough disk space, files older than the copies on the server), aca exits without stopping the site. Files older than the copies on the server mean an old build was picked up, or someone edited files on the server; add `-f` if you do want to overwrite them.
+- **When the pre-check fails** (source code traces, an environment config at the package root, looks like the wrong target, not enough disk space, files older than the copies on the server), aca exits without stopping the site. Files older than the copies on the server mean an old build was picked up, or someone edited files on the server; add `-f` if you do want to overwrite them.
+- **The environment config** is a site's `web.config` or a service's `<executable>.exe.config`: the server keeps its own, so aca refuses a package with one at its root; list it in `exclude` and it is never overwritten.
 - **The home page check** requests `/` over the site's http binding on the server itself; a 5xx or no connection that differs from the status before the deploy fails that server; files are not rolled back automatically. The pre-check prints the home page status before the deploy; sites with only https bindings are not checked.
 - **aca deploys the servers one at a time** and stops at the first failure; servers already deployed are not rolled back automatically.
 - **For a site with `clb`, aca takes each server out of the load balancer before deploying to it**: it sets the server's weight in the CLB default server group to 0, so the CLB sends it no requests while the site is stopped; once the server deploys successfully, aca restores the weight and moves on to the next one.
@@ -136,13 +149,23 @@ On each server, aca runs: download and extract → pre-check → stop the site �
   - **Only the default server group is handled**: for a site whose traffic goes through a VServer group via forwarding rules, taking servers out of the default server group does nothing.
   - **Weights only affect new connections**: layer-7 (HTTP/HTTPS) listeners open a new connection to the server for every request, so they are not affected; connections already established through layer-4 (TCP/UDP) listeners stay on the server and break when its site stops.
   - **Only one `deploy` or `rollback` runs on a CLB at a time**: for a site with `clb`, aca holds the lease (below) on the CLB as well as on the site, so deploying another site on the same CLB fails until the run is over.
-- **Only one `deploy` or `rollback` runs on a site at a time**: aca holds a lease for the whole run, and the other one fails right away, naming who holds it, on which machine and since when.
+- **Only one `deploy` or `rollback` runs on a site or service at a time**: aca holds a lease for the whole run, and the other one fails right away, naming who holds it, on which machine and since when.
   - The lease is an object under `<oss.prefix>lease/` on OSS, renewed every 30 seconds while held; it expires 3 minutes after aca is killed, so there is nothing to unlock by hand, and aca stops before the next server once it has gone nearly 2 minutes without a successful renewal.
   - **It only works between aca installs configured with the same bucket and `oss.prefix`**: that is where the lease lives, and an aca pointed at another bucket cannot see it, so both would deploy at once.
-  - **The lease covers the aca run, not a script already handed to Cloud Assistant**: once aca is killed, the script still runs to the end on the server (up to 30 minutes for a deploy) while the lease expires after 3; check with `aca status <site>` before touching that site again.
+  - **The lease covers the aca run, not a script already handed to Cloud Assistant**: once aca is killed, the script still runs to the end on the server (up to 30 minutes for a deploy) while the lease expires after 3; check with `aca status` before touching that site again.
   - **`--check` takes no lease**: the pre-check changes nothing on the servers.
-- **The server has a lock of its own**: only one script at a time can change a given site on a given server; the other one reports `Another aca operation is modifying this site`.
-  - The lock is an exclusive handle on `<root>.aca-lock` next to the site directory, released when the script ends or is killed; the file staying around doesn't mean anyone holds it.
+- **The server has a lock of its own**: only one script at a time can change a given site or service on a given server; the other one reports `Another aca operation is modifying this site or service`.
+  - The lock is an exclusive handle on `<root>.aca-lock` next to the directory, released when the script ends or is killed; the file staying around doesn't mean anyone holds it.
+
+#### Windows services
+
+Services use the same commands and the same backup and rollback machinery as sites; what differs is stopping and starting:
+
+- **aca waits for the service to really stop and to really start**, up to 120 seconds each, then reports an error rather than letting Cloud Assistant kill the whole script.
+- **When other services depend on it and are running, aca leaves it alone**: stopping it would stop them too, and aca would start only it again afterwards — deploy such a service by hand.
+- **Only services that are running or stopped are deployed**: from `Paused` and the like a service cannot be stopped and started back into the same state, so aca reports an error instead.
+- **The state check** looks every 3 seconds, up to 3 times, after the start: if the service is not back in the state it was in before the deploy (most likely it crashed on startup), that server counts as failed; files are not rolled back automatically.
+- **`--from-stage` on a service is an error**: services have no staging.
 
 #### After a failed deploy
 
@@ -158,7 +181,7 @@ Whether you undo this deploy or fix it and deploy again, first run `aca rollback
 
 ### `aca rollback`
 
-aca restores the latest backup, deletes the files that deploy added, restarts the site, then deletes that backup; rolling back again goes to the deploy before it. For a site with `clb`, aca takes each server out of the load balancer before rolling it back, just as for a deploy, and rolls back servers already left out first; when taking out the next one would leave no server taking traffic, aca reports an error and stops: put the rolled-back server back with `aca clb restore`, then roll back again.
+aca restores the latest backup, deletes the files that deploy added, restarts the site or service, then deletes that backup; rolling back again goes to the deploy before it. If a service that was running doesn't come back up, the version rolled back to doesn't start either: aca reports an error, the service stays stopped on that server, and the remaining servers are left alone. Look into that server first: the backup it used is already gone, so running `aca rollback` again skips it and only takes the other servers to the same version. For a site with `clb`, aca takes each server out of the load balancer before rolling it back, just as for a deploy, and rolls back servers already left out first; when taking out the next one would leave no server taking traffic, aca reports an error and stops: put the rolled-back server back with `aca clb restore`, then roll back again.
 
 ### `aca clb`
 
@@ -188,10 +211,11 @@ On the same servers, aca switches every HTTPS binding that uses a certificate wi
 ## Polling failures and timeouts
 
 - **When aca reports `Polling Cloud Assistant results failed` or `Timed out waiting for Cloud Assistant results`**, the script may still be running on the server; run `aca status` before deciding whether to roll back.
-- **If Cloud Assistant kills the script at its 30-minute limit**, no log entry is written, the site and its app pool may be left stopped, and files may be half overwritten. Run `aca rollback <site> --check`: if this server would roll back this deploy, roll back; otherwise its files are untouched, so start the site with:
+- **If Cloud Assistant kills the script at its 30-minute limit**, no log entry is written, the site and its app pool or the service may be left stopped, and files may be half overwritten. Run `aca rollback <site> --check`: if this server would roll back this deploy, roll back; otherwise its files are untouched, so start it again with:
 
   ```sh
   aca run <instance> "Start-WebAppPool (Get-Website '<site>').applicationPool; Start-Website '<site>'"
+  aca run <instance> "Start-Service '<service>'"   # for a service
   ```
 
 - **For a site with `clb`, in both cases above the server being worked on stays out of the load balancer**, and the output has `WARN: <instance> stays out of CLB`; see "After a failed deploy". If aca itself is stopped halfway (Ctrl+C, for example), the server stays out too, just without that WARN line; put it back with `aca clb restore` all the same.

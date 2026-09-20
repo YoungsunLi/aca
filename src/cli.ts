@@ -5,15 +5,15 @@ import { join } from 'node:path';
 import { Command } from 'commander';
 import { checkCerts, replaceCert, type ReplaceOptions } from './certs.ts';
 import { isWeight, siteClb } from './clb.ts';
-import { getSite, loadConfig } from './config.ts';
+import { getSite, getTarget, loadConfig, targetVars } from './config.ts';
 import { deploy, type DeployOptions } from './deploy.ts';
 import { Ecs, type RunResult } from './ecs.ts';
-import { siteLease } from './lease.ts';
+import { targetLease } from './lease.ts';
 import { renderScript } from './ps.ts';
 import { pull } from './pull.ts';
 import { planRollback, printPlan, rollback } from './rollback.ts';
 
-const program = new Command('aca').description('Run PowerShell on Windows ECS instances and deploy or roll back IIS sites through Alibaba Cloud Cloud Assistant')
+const program = new Command('aca').description('Run PowerShell on Windows ECS instances and deploy or roll back IIS sites and Windows services through Alibaba Cloud Cloud Assistant')
   .version(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);
 
 program.command('instances').description('List ECS instances in the configured region').action(async () => {
@@ -27,6 +27,14 @@ program.command('sites').description('List configured sites with their project, 
   console.log(['Site', 'Project', 'Publish', 'Instances', 'Note'].join('\t'));
   for (const [name, s] of Object.entries(sites)) {
     console.log([name, s.project ?? '-', s.publish ?? '-', s.instances.join(','), s.note ?? ''].join('\t'));
+  }
+});
+
+program.command('services').description('List configured Windows services with their project, publish directory on this machine, directory on the servers and instances').action(() => {
+  const { services } = loadConfig();
+  console.log(['Service', 'Project', 'Publish', 'Directory', 'Instances', 'Note'].join('\t'));
+  for (const [name, s] of Object.entries(services)) {
+    console.log([name, s.project ?? '-', s.publish ?? '-', s.dir, s.instances.join(','), s.note ?? ''].join('\t'));
   }
 });
 
@@ -46,25 +54,26 @@ program.command('pull <instance> <file> [local]').description('Copy a file from 
     if (saved) console.log(`Saved ${saved}`);
   });
 
-program.command('deploy <site> [path]').description('Deploy a directory or zip to a configured IIS site, one server at a time; path defaults to the site\'s publish directory')
-  .option('-c, --check', 'upload and pre-check only: list the files to overwrite and add, without stopping the site')
+program.command('deploy <target> [path]').description('Deploy a directory or zip to a configured IIS site or Windows service, one server at a time; path defaults to its publish directory')
+  .option('-c, --check', 'upload and pre-check only: list the files to overwrite and add, without stopping the site or service')
   .option('-m, --message <text>', 'note for the deploy log on the server, e.g. the commit range or branch')
   .option('-f, --force', 'deploy even if the package has files older than those on the server')
   .option('--skip-stage', 'do not require the package to be the latest deploy on the stage site')
   .option('--from-stage', 'deploy the package the stage site last deployed, straight from OSS, instead of a local directory or zip')
-  .action(async (site: string, path: string | undefined, opts: DeployOptions) => {
+  .action(async (name: string, path: string | undefined, opts: DeployOptions) => {
     // 说明会原样写成服务器发布记录的一行，含换行就能伪造出别的记录行
     if (/[\r\n]/.test(opts.message ?? '')) throw new Error('-m must be a single line');
-    await reportEach(deploy(loadConfig(), site, path, opts));
+    await reportEach(deploy(loadConfig(), name, path, opts));
   });
 
-program.command('status <site>').description('Show what each server is running: newest file time and the last 5 deploy/rollback log entries')
-  .action(async (site: string) => {
+program.command('status <target>').description('Show what each server is running: newest file time, for a service its state, and the last 5 deploy/rollback log entries')
+  .action(async (name: string) => {
     const cfg = loadConfig();
+    const target = getTarget(cfg, name);
     const ecs = new Ecs(cfg);
-    for (const name of getSite(cfg, site).instances) {
-      console.log(`== ${name}`);
-      report(await ecs.runPowerShell(name, renderScript('status', { SITE: site }), 120));
+    for (const instance of target.instances) {
+      console.log(`== ${instance}`);
+      report(await ecs.runPowerShell(instance, renderScript('status', targetVars(name, target), ['target']), 120));
     }
   });
 
@@ -85,12 +94,12 @@ certs.command('replace <source>').description('On every server of the configured
     await reportEach(replaceCert(loadConfig(), source, opts));
   });
 
-program.command('rollback <site>').description('Roll back the latest deploy of a site: restore the files it overwrote and delete the files it added')
+program.command('rollback <target>').description('Roll back the latest deploy of a site or service: restore the files it overwrote and delete the files it added')
   .option('-c, --check', 'only show which backup each server would restore')
-  .action(async (site: string, opts: { check?: boolean }) => {
+  .action(async (name: string, opts: { check?: boolean }) => {
     const cfg = loadConfig();
-    if (opts.check) printPlan(await planRollback(cfg, site));
-    else await reportEach(rollback(cfg, site));
+    if (opts.check) printPlan(await planRollback(cfg, name));
+    else await reportEach(rollback(cfg, name));
   });
 
 const clb = program.command('clb <site>').description('Show the weight of each server of the site in the default server group of its CLB')
@@ -106,7 +115,7 @@ clb.command('restore <site> <instance>').description('Put a server back into the
     if (weight !== undefined && !isWeight(weight)) throw new Error(`--weight must be an integer from 1 to 100, got "${opts.weight}"`);
     const cfg = loadConfig();
     // 占着和发布同一份租约：正发着的那台服务器停着站，放回去就会把请求转给它
-    const held = await siteLease(cfg, site, `clb restore ${site} ${instance}`);
+    const held = await targetLease(cfg, site, `clb restore ${site} ${instance}`);
     try {
       await siteClb(cfg, site, held).restore(instance, weight);
     } finally {

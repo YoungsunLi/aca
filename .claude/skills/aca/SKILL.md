@@ -1,9 +1,9 @@
 ---
 name: aca
-description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发布到 IIS。当用户要求列出服务器、在服务器上执行 PowerShell、看服务器上的日志或拉取文件、查当前版本、查或换 SSL 证书、或发布/回退 IIS 站点时使用。
+description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发布到 IIS、把程序发布到 Windows 服务。当用户要求列出服务器、在服务器上执行 PowerShell、看服务器上的日志或拉取文件、查当前版本、查或换 SSL 证书、或发布/回退 IIS 站点和 Windows 服务时使用。
 ---
 
-# aca：阿里云 ECS / IIS 发布
+# aca：阿里云 ECS / IIS 与 Windows 服务发布
 
 前提：aca 用 `npm install -g aca-cli` 安装，找不到命令就请用户先装；配置文件在 `ACA_CONFIG` 指向的路径或 `~/.aca/config.json`，凭证在环境变量或 `aliyun configure` 写的 `~/.aliyun/config.json` 里。
 
@@ -11,7 +11,7 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
 
 云助手以 SYSTEM 身份执行，用 `aca run` 就等于拿到生产机的管理员 shell，其它命令也都跑在这个权限上。
 
-- 不改站点的直接做：`instances`、`sites`、`status`、`certs`、`clb`、`pull`、各命令的 `--check`，以及 `aca run` 里只查询不改动的脚本。
+- 不改站点和服务的直接做：`instances`、`sites`、`services`、`status`、`certs`、`clb`、`pull`、各命令的 `--check`，以及 `aca run` 里只查询不改动的脚本。
 - 会改服务器的只在用户本轮明确要求时做：`deploy`、`rollback` 按下面的发布流程确认；
   `clb restore` 会让负载均衡重新把请求转给这台服务器，先确认它上面的站点正常，用户同意后再放回；
   `certs replace` 先 `--check`，把每台服务器要换的条目和条目上的站点给用户看，确认后再换；
@@ -30,17 +30,19 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
 - `aca sites` — 列出配置里的站点：站点名、项目名、本机的发布目录、实例、备注。
   用户说的通常是项目名或发布目录名，IIS 站点名往往和它不一样，要靠这张表对应；
   一个项目常对应多个站（正式、测试），发之前让用户确认是哪个
+- `aca services` — 列出配置里的 Windows 服务：服务名、项目名、本机的发布目录、服务器上的目录、实例、备注。
+  `deploy`、`rollback`、`status` 的目标是站点名或服务名，两张表里找不到的不能发
 - `aca run <实例ID或别名> "<powershell>" [-t 秒]` — 在服务器上执行任意 PowerShell 并打印输出，非 0 退出码（包括没被捕获的异常）表示失败。
   出错但没抛异常的命令退出码仍是 0，结果要紧时脚本开头加 `$ErrorActionPreference = 'Stop'`。
   输出太长会被截断（aca 会提示丢了多少字节），在脚本里先筛选，要看整个文件用 `aca pull`
 - `aca pull <实例ID或别名> <服务器上的文件> [本地路径]` — 把服务器上的一个文件拉到本机，不受输出上限限制，正在写的日志也能拉。
   本地路径是已有目录时放进这个目录，省略时是当前目录；本机已有同名文件就报错，拉几台服务器上的同一个文件要分别指定本地路径
-- `aca deploy <站点> [目录或 zip] --check` — 上传并在每台服务器上预检查，打印将覆盖/新增的文件，不停站
-- `aca deploy <站点> [目录或 zip] -m "<说明>"` — 按配置里该站点的服务器顺序逐台预检查、停站、备份、覆盖、启站。
-  路径省略时用配置里该站点的 publish 目录。`-m` 写进服务器上的发布记录，作为这次发布的标识，
-  尽量填提交范围或分支
+- `aca deploy <站点或服务> [目录或 zip] --check` — 上传并在每台服务器上预检查，打印将覆盖/新增的文件，不停站点也不停服务
+- `aca deploy <站点或服务> [目录或 zip] -m "<说明>"` — 按配置里的服务器顺序逐台预检查、停、备份、覆盖、启。
+  路径省略时用配置里的 publish 目录。`-m` 写进服务器上的发布记录，作为这次发布的标识，
+  尽量填提交范围或分支。服务没有预发布，`--from-stage` 用在服务上会报错
 - `aca deploy <站点> --from-stage [--check] [-m "<说明>"]` — 直接发预发布站（配置里的 `stage`）最近一次成功发布的那个包，不用本地路径
-- `aca status <站点>` — 每台服务器上最新的文件时间和最近 5 条 aca 发布/回退记录，回答"现在跑的是哪一版"
+- `aca status <站点或服务>` — 每台服务器上最新的文件时间、服务的运行状态和最近 5 条 aca 发布/回退记录，回答"现在跑的是哪一版"
 - `aca certs` — 登记站点所在的每台服务器上，运行中站点的每个 https 绑定实际发出的证书：实例、站点、绑定、到期日、证书名、指纹、状态。
   状态不是 `OK` 时退出码非 0：`expired`、`expires in N days`（30 天内）、`name mismatch`（证书不含这个域名，浏览器会报错）、
   `handshake failed`（连接被重置多半是这个绑定用的证书已从服务器上删掉）
@@ -48,43 +50,48 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
   `--check` 每台列出要换的 http.sys 条目、条目上的站点（`IP:端口` 条目上的站点会一起换）、旧证书指纹和到期日。
   报 `does not expire later` 多半是拿错了文件，问用户，不要自己加 `-f`。
   某台服务器握手检查不过会自动换回旧证书并停在那台；换完用 `aca certs` 确认。换回旧证书用 `aca certs replace <旧证书指纹> -f`
-- `aca rollback <站点> --check` — 列出每台服务器要撤掉哪次发布、恢复/删除多少文件。
+- `aca rollback <站点或服务> --check` — 列出每台服务器要撤掉哪次发布、恢复/删除多少文件。
   每台服务器要撤的应该是它发布记录里最近一次还没回退的发布；显示 `skipped` 的那台服务器应该没参与那次发布，或已单独回退过它。
   用 `aca status` 只看得到最近 5 条，不够判断就用 `aca run` 读那台服务器上站点目录旁的完整 `<站点目录>.aca-log.txt`。
   对不上说明有备份被人删了，回退会跳过被删的那次、恢复出从没发布过的混合版本，停下来告诉用户
-- `aca rollback <站点>` — 回退最近一次发布（恢复备份、删除那次新增的文件、重启站点），用掉的备份会删除。
-  每台服务器只留最近 `keep` 份备份（默认 5），更早的版本只能重新发旧构建
+- `aca rollback <站点或服务>` — 回退最近一次发布（恢复备份、删除那次新增的文件、重启站点或服务），用掉的备份会删除。
+  每台服务器只留最近 `keep` 份备份（默认 5），更早的版本只能重新发旧构建。
+  回退前在跑的服务没起来时 aca 报 `Files restored, but service Stopped`：退到的这一版也起不来，这台服务器上的服务停着。
+  告诉用户并停下来，别直接再跑一次 `aca rollback`：这台用掉的备份已经删了，再跑只会跳过它、把别的服务器也退到同一版
 - `aca clb <站点>` — 配了 `clb` 的站点每台服务器在 CLB 里的权重，0 就是不接流量；aca 摘下后没放回的注明原来的权重（`before aca took it out`）
 - `aca clb restore <站点> <实例>` — 把 aca 摘下的服务器放回负载均衡，权重调回原来的值。
   原权重记在摘它的那台机器上，报 `No record of the weight` 时问用户原来的权重（WARN 里 `was` 后面的数），用 `--weight` 给出
 
 ## 发布流程
 
-1. 站点必须在配置文件的 `sites` 里登记，不在里面的不能发。要加新站点，先在每台服务器上核实它真的在跑
+1. 站点必须在配置文件的 `sites` 里登记、服务在 `services` 里登记，不在里面的不能发。要加新站点，先在每台服务器上核实它真的在跑
    （`Get-Website` 的状态、应用池有无工作进程、最新文件日期），同名站点在别的服务器上可能是早已停用的副本；
+   加新服务同理，核实 `Get-Service` 的状态和 `Get-WmiObject Win32_Service` 里的可执行文件路径，`dir` 要填这个可执行文件所在的目录；
    核实结果给用户确认后再写进配置，不要自作主张加。
-2. 先跑 `--check`，把结果给用户看：覆盖/新增数量，尤其是 `New DLLs` 一行。站点里原本没有的 DLL
-   要么是新加的依赖，要么是发错了站点，必须让用户确认后才能真正发布。
+2. 先跑 `--check`，把结果给用户看：覆盖/新增数量，尤其是 `New DLLs` 一行。目标目录里原本没有的 DLL
+   要么是新加的依赖，要么是发错了目标，必须让用户确认后才能真正发布。
    有 `Source maps in package` 一行时，告诉用户发上去别人可能看到前端源码，而且发布从不删除服务器上的文件，
    之后再发不带 source map 的包也清不掉它们，必须让用户确认后才能发布。
    报 `Files older than the copies on the server` 时，要么包是旧构建，要么服务器上有人手改过；让用户确认后才加 `--force`，不要自己加。
-3. 发布会让站点停机几秒到几十秒，执行前向用户确认目标和包路径。
+3. 发布会让站点或服务停几秒到几十秒，执行前向用户确认目标和包路径。
    配了 `stage` 的正式站要求包先在预发布站发过且是那边最后一次成功发布，发这种站用 `--from-stage`（`--check` 时也加上），发的就是预发布站验证过的那个包；
    报错让先发预发布站（`deploy to the stage site`）时告诉用户要先发预发布站并验证，不要用 `--skip-stage` 绕过，除非用户明确要求；
    `--from-stage` 报 `no longer on OSS` 时包已被 OSS 生命周期规则清理，改用本地路径发同一份构建。
-4. 每台服务器输出 `== <实例别名>` 加脚本输出，最后一行 `OK: <站点> -> <站点目录>  home <状态码> (before: <状态码>)  (backup: <path>)` 即这台服务器发布成功。
+4. 每台服务器输出 `== <实例别名>` 加脚本输出，最后一行 `OK: <站点或服务> -> <目录>  home <状态码> (before: <状态码>)  (backup: <path>)` 即这台服务器发布成功，
+   服务的那段是 `service <状态> (before: <状态>)`。
    配了 `clb` 的站点，每台服务器前后还各有一行 `CLB <id>: <实例> weight <原值> -> 0`、`CLB <id>: <实例> weight 0 -> <原值>`，是 aca 把它摘出、放回负载均衡。
-5. 某台服务器失败时，aca 不再发后面的服务器，并以非 0 退出，已发布的服务器不会自动回退；失败的那台服务器上，脚本会重新启动站点。
-   被云助手强杀（输出 `[Timeout]`）时例外：站点可能停着，也没有发布记录，文件可能只覆盖了一半。先跑 `aca rollback <站点> --check` 给用户看，
-   这台服务器要撤的是这次发布（发布 ID 是开始时的 UTC 时间）就回退，否则文件没动过，用 `aca run` 启动站点和应用池。
+5. 某台服务器失败时，aca 不再发后面的服务器，并以非 0 退出，已发布的服务器不会自动回退；失败的那台服务器上，脚本会重新启动站点或服务。
+   被云助手强杀（输出 `[Timeout]`）时例外：站点或服务可能停着，也没有发布记录，文件可能只覆盖了一半。先跑 `aca rollback <站点> --check` 给用户看，
+   这台服务器要撤的是这次发布（发布 ID 是开始时的 UTC 时间）就回退，否则文件没动过，用 `aca run` 启动站点和应用池，或 `Start-Service`。
    启站后首页 5xx 或连不上、且和发布前不同，也算这台服务器失败；发布前后一样的 5xx 不算，但要告诉用户这个站首页本来就不正常。
+   服务没回到发布前的运行状态（多半是启动即崩）同样算失败；发布前就停着的服务 aca 不会启动它，最后一行是 `service Stopped (before: Stopped)`，这不算失败。
    不论是撤销这次发布还是修好重发，都先跑 `aca rollback <站点> --check` 给用户看：要撤的是这次发布就确认后跑 `aca rollback <站点>`，
    是更早的发布说明哪台服务器都没发上，不用回退；发上了这次的服务器不先回退就重发，会把这次的版本当作备份，之后回退一次退不回发布前的版本。
 6. 如果 aca 报的是 `Polling Cloud Assistant results failed` 或 `Timed out waiting for Cloud Assistant results`，那是看不到结果，不是发布失败，
    服务器上的脚本可能还在跑。先跑 `aca status <站点>` 看有没有这次的记录，不要马上回退。
 7. `--check` 输出里有 `NOTE: app pool … is shared` 时，告诉用户发布会让那几个站点也中断几秒。
-8. 报 `... is held by <用户>@<机器>` 是别人正在发这个站点，或正在发同一个 CLB 上的另一个站点，等它结束再试；`Another aca operation is modifying this site` 同理。
-   报 `The site was deployed again after this rollback was planned` 是中间有人发了新版本，重新跑 `aca rollback <站点> --check` 看清楚再决定。
+8. 报 `... is held by <用户>@<机器>` 是别人正在发这个站点或服务，或正在发同一个 CLB 上的另一个站点，等它结束再试；`Another aca operation is modifying this site or service` 同理。
+   报 `<名字> was deployed again after this rollback was planned` 是中间有人发了新版本，重新跑 `aca rollback <站点> --check` 看清楚再决定。
 9. 配了 `clb` 的站点，输出里有 `WARN: <实例> stays out of CLB` 时，这台服务器留在了负载均衡外，回退、重发都不会放回它：
    告诉用户，等这台服务器上的站点正常了（比如回退输出里的首页状态码和发布前一样），用户同意后跑 `aca clb restore <站点> <实例>`。
    aca 被中途终止时没有这行 WARN，也可能有服务器留在外面，用 `aca clb <站点>` 看。

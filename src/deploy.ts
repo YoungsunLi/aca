@@ -6,9 +6,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ZipArchive } from 'archiver';
 import { clbOf, outOfClb } from './clb.ts';
-import { type Config, getSite } from './config.ts';
+import { type Config, getSite, getTarget, targetVars } from './config.ts';
 import { Ecs, type RunResult } from './ecs.ts';
-import { siteLease } from './lease.ts';
+import { targetLease } from './lease.ts';
 import { exists, signForEcs, upload } from './oss.ts';
 import { renderScript } from './ps.ts';
 
@@ -21,40 +21,42 @@ const packageId = (sha256: string, exclude: string[]) => createHash('sha256').up
 const objectOf = (cfg: Config, sha256: string) => `${cfg.oss.prefix ?? ''}${sha256}.zip`;
 
 // 多台服务器按配置顺序逐台发布，一台失败就停：坏包只影响一台，负载均衡下其余服务器继续服务
-export async function* deploy(cfg: Config, site: string, path: string | undefined, { check = false, message = '', force = false, skipStage = false, fromStage = false }: DeployOptions): AsyncGenerator<[string, RunResult]> {
-  const { instances, publish, exclude = [], stage, keep = 5 } = getSite(cfg, site);
+export async function* deploy(cfg: Config, name: string, path: string | undefined, { check = false, message = '', force = false, skipStage = false, fromStage = false }: DeployOptions): AsyncGenerator<[string, RunResult]> {
+  const target = getTarget(cfg, name);
+  const { instances, publish, exclude = [], keep = 5 } = target;
+  const stage = target.kind === 'site' ? target.stage : undefined;
   // 预检查不改服务器上的任何东西
-  const held = check ? undefined : await siteLease(cfg, site, `deploy ${site}`);
+  const held = check ? undefined : await targetLease(cfg, name, `deploy ${name}`);
   try {
     const deployId = new Date().toISOString().replace(/[-:]|\.\d+/g, '');
     const ecs = new Ecs(cfg, held);
-    const clb = clbOf(cfg, site, held);
+    const clb = target.kind === 'site' ? clbOf(cfg, name, held) : undefined;
     await clb?.check(instances);
     let pkg: Package;
     if (fromStage) {
-      if (!stage) throw new Error(`Site ${site} has no stage site in the config`);
+      if (!stage) throw new Error(`${name} has no stage site in the config`);
       if (path) throw new Error('--from-stage takes no path');
       pkg = await assertStaged(cfg, ecs, stage);
       if (packageId(pkg.sha256, exclude) !== pkg.id) throw new Error(`Package ${pkg.id} was deployed to stage site ${stage} with a different exclude list; deploy to the stage site again`);
     } else {
       const localPath = path ?? publish;
-      if (!localPath) throw new Error(`No package path given and site ${site} has no publish directory in the config`);
+      if (!localPath) throw new Error(`No package path given and ${name} has no publish directory in the config`);
       pkg = await uploadLocal(cfg, ecs, localPath, exclude, skipStage ? undefined : stage);
     }
     const object = objectOf(cfg, pkg.sha256);
     if (fromStage && !await exists(cfg, object)) throw new Error(`Package ${pkg.id} is no longer on OSS, most likely removed by the bucket's lifecycle rule; deploy the same build from a local path instead`);
 
     const timeout = 1800;
-    for (const [i, name] of instances.entries()) {
+    for (const [i, instance] of instances.entries()) {
       held?.check();
       // 每台服务器现签一个链接，有效期同这台的运行时限：STS 类凭证签出的链接随 token 失效，整批共用一个，排在后面的服务器会下载失败。
       // 签在摘出负载均衡之前，签名出错时这台服务器还没被摘
       const script = renderScript('deploy', {
-        SITE: site, URL: await signForEcs(cfg, object, timeout), SHA256: pkg.sha256, DEPLOY_ID: deployId, PACKAGE: pkg.id, MESSAGE: message,
+        ...targetVars(name, target), URL: await signForEcs(cfg, object, timeout), SHA256: pkg.sha256, DEPLOY_ID: deployId, PACKAGE: pkg.id, MESSAGE: message,
         CHECK_ONLY: String(check), FORCE: String(force), EXCLUDE: exclude.join('\n'), KEEP: String(keep),
-      });
-      const r = yield* outOfClb(check ? undefined : clb, held, name, () => ecs.runPowerShell(name, script, timeout));
-      if (r.status !== 'Success') throw new Error(`${name}: ${check ? 'pre-check' : 'deploy'} failed, ${instances.length - i - 1} remaining server(s) not processed`);
+      }, ['target']);
+      const r = yield* outOfClb(check ? undefined : clb, held, instance, () => ecs.runPowerShell(instance, script, timeout));
+      if (r.status !== 'Success') throw new Error(`${instance}: ${check ? 'pre-check' : 'deploy'} failed, ${instances.length - i - 1} remaining server(s) not processed`);
     }
   } finally {
     await held?.release();
@@ -87,7 +89,7 @@ async function uploadLocal(cfg: Config, ecs: Ecs, path: string, exclude: string[
 async function assertStaged(cfg: Config, ecs: Ecs, stage: string, id?: string): Promise<Package> {
   let staged: Package | undefined;
   for (const name of getSite(cfg, stage).instances) {
-    const r = await ecs.runPowerShell(name, renderScript('lastdeploy', { SITE: stage }), 60);
+    const r = await ecs.runPowerShell(name, renderScript('lastdeploy', { SITE: stage }, ['target']), 60);
     if (r.status !== 'Success') throw new Error(`Failed to read the deploy log of stage site ${stage} (${name}): ${r.output.trim() || r.error}`);
     const last = r.output.trim();
     const m = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \| deploy \S+ \| pkg=([0-9a-f]+) \| sha256=([0-9a-f]{64}) \| /.exec(last);
