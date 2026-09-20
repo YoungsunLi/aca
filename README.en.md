@@ -1,6 +1,6 @@
 <div align="center">
 
-# aca — Aliyun Cloud Assistant CLI
+![aca — Aliyun Cloud Assistant CLI](.github/banner.svg)
 
 [![npm](https://img.shields.io/npm/v/aca-cli?logo=npm)](https://www.npmjs.com/package/aca-cli)
 [![node](https://img.shields.io/node/v/aca-cli?logo=nodedotjs)](https://nodejs.org/)
