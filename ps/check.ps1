@@ -46,8 +46,6 @@ try {
   $rels = @($files | ForEach-Object { $_.FullName.Substring($new.Length + 1) })
   $src = @($rels | Where-Object { $_ -match '^(\.git|\.vs|obj|node_modules)\\|\.(csproj|sln|cs)$' })
   if ($src) { throw "Package looks like a source directory, not publish output, e.g. $($src[0..2] -join ', ')" }
-  $envConfig = @($rels | Where-Object { Test-AcaEnvConfig $web $_ })
-  if ($envConfig) { throw "Package root contains $($envConfig -join ', '), which would overwrite the environment config on the server; add it to exclude in the aca config" }
   if ($rels -contains 'aca-manifest.txt') { throw 'Package root contains aca-manifest.txt, which would overwrite the backup manifest of the same name; remove it from the package' }
   $rootTop = @(Get-ChildItem -LiteralPath $root | ForEach-Object Name)
   $pkgTop = @($rels | ForEach-Object { ($_ -split '\\')[0] } | Select-Object -Unique)

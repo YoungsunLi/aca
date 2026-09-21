@@ -23,7 +23,7 @@ const objectOf = (cfg: Config, sha256: string) => `${cfg.oss.prefix ?? ''}${sha2
 // 多台服务器按配置顺序逐台发布，一台失败就停：坏包只影响一台，负载均衡下其余服务器继续服务
 export async function* deploy(cfg: Config, name: string, path: string | undefined, { check = false, message = '', force = false, skipStage = false, fromStage = false }: DeployOptions): AsyncGenerator<[string, RunResult]> {
   const target = getTarget(cfg, name);
-  const { instances, publish, exclude = [], keep = 5 } = target;
+  const { instances, publish, exclude = [], keep = 5, overwriteConfig = false } = target;
   const stage = target.kind === 'site' ? target.stage : undefined;
   // 预检查不改服务器上的任何东西
   const held = check ? undefined : await targetLease(cfg, name, `deploy ${name}`);
@@ -51,7 +51,7 @@ export async function* deploy(cfg: Config, name: string, path: string | undefine
     // 先查完每台服务器再动手：发到一半才发现后面的服务器过不了预检查，负载均衡后面就是新旧两个版本
     const checkScript = renderScript('check', { ...vars, URL: await signForEcs(cfg, object, timeout), CHECK_ONLY: String(check) }, ['target', 'inspect']);
     // 分析解开的包各自一条命令：和预检查放在一起，连同签名 URL 会超出 RunCommand 的 24 KB
-    const scripts = [checkScript, renderScript('analyze', vars, ['target', 'config']), renderScript('refs', { ...vars, CHECK_ONLY: String(check) }, ['target'])];
+    const scripts = [checkScript, renderScript('analyze', { ...vars, OVERWRITE_CONFIG: String(overwriteConfig) }, ['target', 'config']), renderScript('refs', { ...vars, CHECK_ONLY: String(check) }, ['target'])];
     const checks = await inParallel(cfg, instances, async (instance): Promise<[string, RunResult]> => {
       let r = await ecs.runPowerShell(instance, scripts[0], timeout);
       for (const script of scripts.slice(1)) {

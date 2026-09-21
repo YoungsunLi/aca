@@ -12,6 +12,8 @@ type Deployable = {
   publish?: string;
   /** 包里不发布的相对路径（目录或文件），如 bin/Res：服务器上自己维护的密钥、环境配置列在这里，发布就不会覆盖 */
   exclude?: string[];
+  /** 环境配置（站点的 web.config、服务的 <可执行文件>.exe.config）随包整份覆盖，不用列进 exclude：环境值不在这份文件里的项目用 */
+  overwriteConfig?: boolean;
   /** 每台服务器上保留的备份份数，rollback 最多能连退这么多次 */
   keep?: number;
   note?: string;
@@ -89,6 +91,7 @@ function checkDeployable(file: string, what: string, d: Deployable, aliases: Rec
   const bad = d.instances.find((i) => !Object.hasOwn(aliases, i) && !i.startsWith('i-'));
   if (bad) throw new Error(`${file}: "${bad}" in ${what} is neither an alias from instances nor an instance ID`);
   if (d.keep !== undefined && !(Number.isInteger(d.keep) && d.keep > 0)) throw new Error(`${file}: keep of ${what} must be a positive integer`);
+  if (d.overwriteConfig !== undefined && typeof d.overwriteConfig !== 'boolean') throw new Error(`${file}: overwriteConfig of ${what} must be true or false`);
   if (d.exclude !== undefined) {
     if (!Array.isArray(d.exclude) || !d.exclude.every((p) => typeof p === 'string')) throw new Error(`${file}: exclude of ${what} must be an array of paths`);
     // 服务器端按 Windows 相对路径做前缀匹配，统一成 bin\Res 的形式；带 . 和 .. 的写法匹配不上会悄悄失效。

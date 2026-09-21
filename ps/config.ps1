@@ -4,6 +4,9 @@
 $acaTag = '\G<[^\s/>]+(?:\s+[^\s=/>]+\s*=\s*(?:"[^"]*"|''[^'']*''))*\s*/?>'
 # 开始标签里带 configSource 的节放在别的文件里，自己不能再有别的属性和内容，否则 .NET 整份配置都不认
 $acaExternal = '\sconfigSource\s*='
+# 在根路径上生效的节的容器：configuration 本身，和 path 为空或 "." 的 location；写在子路径 location 里的只对子路径生效。
+# 按 local-name 找：ASP.NET 2.0 的工具给 configuration 加过默认命名空间，老站点的 web.config 还带着
+$acaRoots = "(/* | /*/*[local-name()='location'][not(@path) or @path='' or @path='.'])"
 
 # 按从根开始的路径找元素，返回每处的 Index、Length、Empty（自闭合）；注释和 CDATA 里同名的文字不会误中
 function Find-AcaElements($text, $path) {
@@ -202,17 +205,15 @@ function Get-AcaMissing($srv, $pkg) {
   $p = Read-AcaXml $pkg
   $builtIn = @((Join-Path ([Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirectory()) 'Config\machine.config'), "$env:windir\System32\inetsrv\config\applicationHost.config" | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { $x = New-Object xml; $x.Load($_); $x })
   $groups = @(@($s, $p) + $builtIn | ForEach-Object { Get-AcaGroups $_ })
-  # 按 local-name 找：ASP.NET 2.0 的工具给 configuration 加过默认命名空间，老站点的 web.config 还带着。
-  # 只比根路径上生效的：直接写在 configuration 下的，和包在 path 为空或 "." 的 location 里的
-  $roots = "(/* | /*/*[local-name()='location'][not(@path) or @path='' or @path='.'])"
-  $names = { param($x, $q) if ($q.Section) { $x.SelectNodes("$roots/*[local-name()='$($q.Section)']/*[local-name()='add']/@$($q.Key)") | ForEach-Object Value } else { $x.SelectNodes($roots) | ForEach-Object { Get-AcaSections $_ '' $groups } } }
+  # 只比根路径上生效的
+  $names = { param($x, $q) if ($q.Section) { $x.SelectNodes("$acaRoots/*[local-name()='$($q.Section)']/*[local-name()='add']/@$($q.Key)") | ForEach-Object Value } else { $x.SelectNodes($acaRoots) | ForEach-Object { Get-AcaSections $_ '' $groups } } }
   foreach ($q in @(
     @{ Label = 'sections' }
     # 服务器上那份把这一节放在别的文件里时看不到有哪些条目，不比
     @{ Label = 'appSettings keys'; Section = 'appSettings'; Key = 'key'; Elsewhere = '@configSource or @file' }
     @{ Label = 'connection strings'; Section = 'connectionStrings'; Key = 'name'; Elsewhere = '@configSource' }
   )) {
-    if ($q.Elsewhere -and $s.SelectSingleNode("$roots/*[local-name()='$($q.Section)'][$($q.Elsewhere)]")) { continue }
+    if ($q.Elsewhere -and $s.SelectSingleNode("$acaRoots/*[local-name()='$($q.Section)'][$($q.Elsewhere)]")) { continue }
     $have = @(& $names $s $q)
     $miss = @(& $names $p $q | Where-Object { $have -notcontains $_ } | Select-Object -Unique)
     if ($miss) { "$($q.Label) $($miss -join ', ')" }

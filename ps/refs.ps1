@@ -77,8 +77,10 @@ try {
       $beforeXml = New-Object xml
       $beforeXml.LoadXml('<configuration/>')
     }
+    # 发布后生效的：排除了的是预检查合好的那份（没有要合的就还是服务器上那份），没排除的是整份发出去的包里那份
+    $afterPath = if (-not $cfgName) { '' } elseif (Test-AcaExcluded $cfgName $exclude) { "$work\config\$cfgName" } else { "$work\new\$cfgName" }
     $afterXml = $beforeXml
-    if ($cfgName -and (Test-Path -LiteralPath "$work\config\$cfgName")) { $afterXml = New-Object xml; $afterXml.Load("$work\config\$cfgName") }
+    if ($afterPath -and (Test-Path -LiteralPath $afterPath)) { $afterXml = New-Object xml; $afterXml.Load($afterPath) }
     $before = @(Get-AcaRedirects $beforeXml)
     $after = @(Get-AcaRedirects $afterXml)
 
