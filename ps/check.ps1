@@ -43,8 +43,7 @@ try {
   $rels = @($files | ForEach-Object { $_.FullName.Substring($new.Length + 1) })
   $src = @($rels | Where-Object { $_ -match '^(\.git|\.vs|obj|node_modules)\\|\.(csproj|sln|cs)$' })
   if ($src) { throw "Package looks like a source directory, not publish output, e.g. $($src[0..2] -join ', ')" }
-  # 环境配置是服务器上自己维护的：站点的是 web.config，服务的是 <可执行文件>.exe.config
-  $envConfig = @($rels | Where-Object { if ($web) { $_ -eq 'web.config' } else { $_ -match '^[^\\]+\.exe\.config$' } })
+  $envConfig = @($rels | Where-Object { Test-AcaEnvConfig $web $_ })
   if ($envConfig) { throw "Package root contains $($envConfig -join ', '), which would overwrite the environment config on the server; add it to exclude in the aca config" }
   if ($rels -contains 'aca-manifest.txt') { throw 'Package root contains aca-manifest.txt, which would overwrite the backup manifest of the same name; remove it from the package' }
   $rootTop = @(Get-ChildItem -LiteralPath $root | ForEach-Object Name)
@@ -65,15 +64,14 @@ try {
   "Newest file in package: $($newest.FullName.Substring($new.Length + 1))  $($newest.LastWriteTime.ToString('yyyy-MM-dd HH:mm'))"
   Assert-AcaDiskSpace $root $files $rels $added
   $older = @(Get-AcaOlderFiles $root $files $rels $added)
-  if ($older) { "Files older than the copies on the server: $(($older | Select-Object -First 20) -join ', ')" }
+  if ($older) { "Files older than the copies on the server$(if ($checkOnly -and -not $force) { ' (deploying needs --force)' }): $(($older | Select-Object -First 20) -join ', ')" }
   $before = Get-AcaHealth $web $name 1
   "$label now: $before"
   if (-not $web) { [void](Test-AcaServiceRunning $before $name) }
   # 只预检查时只提示不拦：每台服务器上旧的文件都列出来，再决定要不要 --force
-  if ($checkOnly) { "CHECK OK (not deployed$(if ($older -and -not $force) { '; deploying needs --force' }))"; return }
-  if ($older -and -not $force) { throw "$($older.Count) files in the package are older than the copies on the server; pass --force to overwrite them anyway" }
-  'Pre-check OK'
+  if ($older -and -not $force -and -not $checkOnly) { throw "$($older.Count) files in the package are older than the copies on the server; pass --force to overwrite them anyway" }
   $passed = $true
 } finally {
-  if ($checkOnly -or -not $passed) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
+  # 通过了就留着解开的包：预检查的下一步 analyze 还要用
+  if (-not $passed) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
 }

@@ -20,5 +20,8 @@ function Get-AcaServiceRoot($name, $dir) {
 function Test-AcaExcluded($rel, $exclude) {
   [bool]@($exclude | Where-Object { $rel -eq $_ -or $rel.StartsWith($_ + '\', 'OrdinalIgnoreCase') })
 }
+# 环境配置是服务器上自己维护的：站点的是 web.config，服务的是 <可执行文件>.exe.config
+function Test-AcaEnvConfig($web, $rel) { if ($web) { $rel -eq 'web.config' } else { $rel -match '^[^\\]+\.exe\.config$' } }
+function Get-AcaHash($bytes) { [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($bytes)) -replace '-' }
 # 服务名里的 [ ] 会被 -Name 当通配符，Worker[1] 会取到 Worker1
 function Get-AcaService($name) { Get-Service -Name ([Management.Automation.WildcardPattern]::Escape($name)) }

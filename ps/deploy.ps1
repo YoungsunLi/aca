@@ -28,6 +28,11 @@ try {
   # 预检查到现在，前面的服务器在发，这台可能又被占了磁盘，也可能被租约管不到的另一套 aca 或有人手工改了文件
   Assert-AcaDiskSpace $root $files $rels $added
   if (-not $force -and @(Get-AcaOlderFiles $root $files $rels $added)) { throw 'Files on the server changed after the pre-check and are now newer than the package; check what changed, then deploy again or pass --force' }
+  # 预检查把包里环境配置中由构建决定的部分合进了服务器上那份，存在这里；服务器上那份之后被改过，合出来的就作废
+  $configs = @(Get-ChildItem -LiteralPath (Join-Path $work 'config') -File -Filter '*.config' -ErrorAction SilentlyContinue)
+  foreach ($c in $configs) {
+    if ((Get-AcaHash ([IO.File]::ReadAllBytes((Join-Path $root $c.Name)))) -ne (Get-Content -LiteralPath "$($c.FullName).base")) { throw "$($c.Name) on the server changed after the pre-check; deploy again" }
+  }
   # 发布前的状态留着对照：发布后坏了才知道是这次包的问题还是本来就坏
   $before = Get-AcaHealth $web $name 1
   # 发布前就停着的服务，发布后也不启动：备机上的服务常常是刻意停着的
@@ -40,10 +45,12 @@ try {
     foreach ($rel in $rels) {
       if ($added -notcontains $rel) { Copy-AcaFile (Join-Path $root $rel) (Join-Path $backup $rel) }
     }
+    foreach ($c in $configs) { Copy-AcaFile (Join-Path $root $c.Name) (Join-Path $backup $c.Name) }
     # 清单第一行是发布 ID，其余是本次新增的文件；备份集合按同一份 $added 算，回退时恢复和删除才不会打架。
     # 备份全部写完才写清单：没清单的目录不算备份，复制到一半的不会被拿去回退
     Set-Content -LiteralPath $manifest -Value (@($deployId) + $added) -Encoding UTF8
     foreach ($f in $files) { Copy-AcaFile $f.FullName (Join-Path $root $f.FullName.Substring($new.Length + 1)) }
+    foreach ($c in $configs) { Copy-AcaFile $c.FullName (Join-Path $root $c.Name) }
   } catch {
     # 还没写清单就是还没开始覆盖，目录没动过，半截的备份没用；先删它，磁盘满时写日志才有空间
     if (-not (Test-Path -LiteralPath $manifest)) { Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue }

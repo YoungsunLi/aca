@@ -93,6 +93,8 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
    有 `Source maps in package` 一行时，告诉用户发上去别人可能看到前端源码，而且发布从不删除服务器上的文件，
    之后再发不带 source map 的包也清不掉它们，必须让用户确认后才能发布。
    报 `Files older than the copies on the server` 时，要么包是旧构建，要么服务器上有人手改过；让用户确认后才加 `--force`，不要自己加。
+   有 `<环境配置> follows the package in:` 时，下面每行是发布时 aca 要改服务器上这份配置的地方（`+` 新增，`~` 改成包里的，`kept` 只在服务器上有、保留），给用户过目；
+   `WARN <环境配置>: ... not synced` 是这一段 aca 合不了、保持服务器原样，告诉用户。
 3. 发布会让站点或服务停几秒到几十秒，执行前向用户确认目标和包路径。
    配了 `stage` 的正式站要求包先在预发布站发过且是那边最后一次成功发布，发这种站用 `--from-stage`（`--check` 时也加上），发的就是预发布站验证过的那个包；
    报错让先发预发布站（`deploy to the stage site`）时告诉用户要先发预发布站并验证，不要用 `--skip-stage` 绕过，除非用户明确要求；

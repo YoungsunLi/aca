@@ -50,7 +50,14 @@ export async function* deploy(cfg: Config, name: string, path: string | undefine
     const vars = { ...targetVars(name, target), WORK: `aca-${deployId}-${randomBytes(4).toString('hex')}`, DEPLOY_ID: deployId, SHA256: pkg.sha256, EXCLUDE: exclude.join('\n'), FORCE: String(force) };
     // 先查完每台服务器再动手：发到一半才发现后面的服务器过不了预检查，负载均衡后面就是新旧两个版本
     const checkScript = renderScript('check', { ...vars, URL: await signForEcs(cfg, object, timeout), CHECK_ONLY: String(check) }, ['target', 'inspect']);
-    const checks = await inParallel(cfg, instances, async (instance): Promise<[string, RunResult]> => [instance, await ecs.runPowerShell(instance, checkScript, timeout)]);
+    // 分析解开的包单独一条命令：和预检查放在一起，连同签名 URL 会超出 RunCommand 的 24 KB
+    const analyzeScript = renderScript('analyze', { ...vars, CHECK_ONLY: String(check) }, ['target', 'config']);
+    const checks = await inParallel(cfg, instances, async (instance): Promise<[string, RunResult]> => {
+      const c = await ecs.runPowerShell(instance, checkScript, timeout);
+      if (c.status !== 'Success') return [instance, c];
+      const a = await ecs.runPowerShell(instance, analyzeScript, timeout);
+      return [instance, { ...a, output: c.output + a.output, dropped: c.dropped + a.dropped }];
+    });
     yield* checks;
     if (check) return;
     const failed = checks.filter(([, r]) => r.status !== 'Success').map(([instance]) => instance);
