@@ -22,6 +22,11 @@ function Test-AcaExcluded($rel, $exclude) {
 }
 # 环境配置是服务器上自己维护的：站点的是 web.config，服务的是 <可执行文件>.exe.config
 function Test-AcaEnvConfig($web, $rel) { if ($web) { $rel -eq 'web.config' } else { $rel -match '^[^\\]+\.exe\.config$' } }
+# 在根路径上生效的节的容器：configuration 本身，和 path 为空或 "." 的 location；写在子路径 location 里的只对子路径生效。
+# 按 local-name 找：ASP.NET 2.0 的工具给 configuration 加过默认命名空间，老站点的 web.config 还带着
+$acaRoots = "(/* | /*/*[local-name()='location'][not(@path) or @path='' or @path='.'])"
+# ASP.NET Core 的站点：web.config 是发布时生成的，在根路径上配了 aspNetCore
+function Get-AcaCoreHandler($x) { $x.SelectSingleNode("$acaRoots/*[local-name()='system.webServer']/*[local-name()='aspNetCore']") }
 function Get-AcaHash($bytes) { [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($bytes)) -replace '-' }
 # 服务名里的 [ ] 会被 -Name 当通配符，Worker[1] 会取到 Worker1
 function Get-AcaService($name) { Get-Service -Name ([Management.Automation.WildcardPattern]::Escape($name)) }

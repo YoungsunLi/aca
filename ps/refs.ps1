@@ -5,8 +5,8 @@ $force = '__FORCE__' -eq 'true'
 $exclude = @('__EXCLUDE__' -split "`n" | Where-Object { $_ })
 $work = Join-Path $env:TEMP '__WORK__'
 
-# 按运行时的规则把发布后每个强名称引用解析一遍：这次发布让原来找得到的引用找不到了，或者新代码引用的版本 bin 里没有，
-# 站点或服务往往照样启动，要等用到那段代码才报错，发布后的首页检查拦不住
+# 按运行时的规则检查发布后的样子：每个强名称引用都解析得到，服务器上装着包要的运行时，程序集的位数和进程对得上。
+# 这些问题站点或服务往往照样启动，要等用到那段代码才报错，发布后的首页检查拦不住
 
 function Get-AcaToken($an) { ([BitConverter]::ToString($an.GetPublicKeyToken()) -replace '-').ToLower() }
 function Get-AcaIdentity($an) { New-Object psobject -Property @{ Version = $an.Version; Token = Get-AcaToken $an } }
@@ -14,7 +14,30 @@ function Get-AcaIdentity($an) { New-Object psobject -Property @{ Version = $an.V
 function Read-AcaAssembly($bytes) {
   try { $asm = [Reflection.Assembly]::ReflectionOnlyLoad($bytes) } catch { return }
   $n = $asm.GetName()
-  New-Object psobject -Property @{ Name = $n.Name; Identity = Get-AcaIdentity $n; Refs = @($asm.GetReferencedAssemblies() | Where-Object { $_.GetPublicKeyToken() }) }
+  $pk = [Reflection.PortableExecutableKinds]
+  $k = $pk::ILOnly; $m = [Reflection.ImageFileMachine]::I386
+  $asm.ManifestModule.GetPEKind([ref]$k, [ref]$m)
+  New-Object psobject -Property @{
+    Name = $n.Name; Identity = Get-AcaIdentity $n; Refs = @($asm.GetReferencedAssemblies() | Where-Object { $_.GetPublicKeyToken() })
+    # 只能在 32 位或只能在 64 位进程里加载的；混合模式（C++/CLI）的不是纯 IL，跟着 PE 的位数走
+    Bits = $(if ($k -band $pk::PE32Plus) { 64 } elseif (($k -band $pk::Required32Bit) -or -not ($k -band $pk::ILOnly)) { 32 })
+  }
+}
+# 可执行文件跑在几位的进程里。读 PE 头，不加载：新旧两份同名同版本时，同一个进程里加载不了第二份
+function Get-AcaExeBits($path) {
+  $b = [IO.File]::ReadAllBytes($path)
+  $pe = [BitConverter]::ToInt32($b, 0x3C)
+  if ([BitConverter]::ToUInt16($b, $pe + 24) -eq 0x20b) { return 64 }
+  # PE32 的原生程序是 32 位；托管的看 CLR 头的 32BITREQUIRED：x86，或者和 32BITPREFERRED 一起表示 AnyCPU 勾了"首选 32 位"
+  $clr = [BitConverter]::ToUInt32($b, $pe + 24 + 96 + 14 * 8)
+  if (-not $clr) { return 32 }
+  $table = $pe + 24 + [BitConverter]::ToUInt16($b, $pe + 20)
+  for ($i = 0; $i -lt [BitConverter]::ToUInt16($b, $pe + 6); $i++) {
+    $s = $table + 40 * $i
+    $va = [BitConverter]::ToUInt32($b, $s + 12)
+    if ($clr -ge $va -and $clr -lt $va + [BitConverter]::ToUInt32($b, $s + 8)) { if ([BitConverter]::ToUInt32($b, $clr - $va + [BitConverter]::ToUInt32($b, $s + 20) + 16) -band 2) { return 32 } }
+  }
+  64
 }
 function Get-AcaRedirects($x) {
   foreach ($da in @($x.SelectNodes("/configuration/runtime/*[local-name()='assemblyBinding']/*[local-name()='dependentAssembly']"))) {
@@ -52,6 +75,30 @@ function Resolve-AcaRef($r, $redirects, $bin) {
   if (-not $redirected -and (Test-Path -LiteralPath (Join-Path ([Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirectory()) "$($r.Name).dll"))) { return }
   if ($has) { "bin has $($has.Version)$(if ($has.Token -ne $r.Token) { " signed with another key" }), the reference resolves to $want" } else { 'absent' }
 }
+# 配置里要的 .NET Framework 版本：站点 compilation、httpRuntime 的 targetFramework，服务 startup 的 sku
+function Get-AcaConfigTargets($x) {
+  foreach ($a in @($x.SelectNodes("//*[local-name()='compilation' or local-name()='httpRuntime']/@targetFramework | //*[local-name()='supportedRuntime']/@sku"))) {
+    if ($a.Value -match '(\d+(?:\.\d+)+)$') { "$($a.OwnerElement.LocalName) $($a.LocalName)|$($matches[1])" }
+  }
+}
+# runtimeconfig.json 要的共享框架里，服务器上按前滚规则找不到的。只能估计：应用跑在几位上、环境变量里的 DOTNET_ROOT、
+# DOTNET_ROLL_FORWARD 都会改变宿主去哪找、认哪个版本，aca 看不全，所以 32 位、64 位两份 dotnet 有一份装着就算，找不到也只提示
+function Get-AcaMissingFrameworks($path, $dotnets) {
+  $o = ([IO.File]::ReadAllText($path) | ConvertFrom-Json).runtimeOptions
+  # 旧写法 rollForwardOnNoCandidateFx：0 只前滚补丁号，1 前滚次版本号，2 前滚主版本号
+  $legacy = @{ '0' = 'LatestPatch'; '1' = 'Minor'; '2' = 'Major' }
+  foreach ($fx in @(@($o.framework) + @($o.frameworks) | Where-Object { $_ })) {
+    $policy = @($fx.rollForward, $o.rollForward, $legacy["$($fx.rollForwardOnNoCandidateFx)"], $legacy["$($o.rollForwardOnNoCandidateFx)"], 'Minor' | Where-Object { $_ })[0]
+    $want = [version]($fx.version -replace '-.*')
+    # 要的是正式版就不会前滚到预览版
+    $pre = $fx.version -match '-'
+    $have = @(Get-ChildItem -LiteralPath @($dotnets | ForEach-Object { "$_\shared\$($fx.name)" }) -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d+\.\d+\.\d+(-.+)?$' -and ($pre -or -not $matches[1]) } | ForEach-Object { [version]($_.Name -replace '-.*') } | Sort-Object -Unique)
+    $ok = @($have | Where-Object { $_ -ge $want -and $(if ($policy -eq 'Disable') { $_ -eq $want } elseif ($policy -eq 'LatestPatch') { $_.Major -eq $want.Major -and $_.Minor -eq $want.Minor } elseif ($policy -match 'Major$') { $true } else { $_.Major -eq $want.Major }) })
+    if (-not $ok) { "$($fx.name) $($fx.version)$(if ($policy -ne 'Minor') { " (rollForward $policy)" }); this server has $(if ($have) { $have -join ', ' } else { 'none' })" }
+  }
+}
+# .NET Framework 4.5 起每个版本在注册表里 Release 值的下限
+$acaReleases = [ordered]@{ '4.5' = 378389; '4.5.1' = 378675; '4.5.2' = 379893; '4.6' = 393295; '4.6.1' = 394254; '4.6.2' = 394802; '4.7' = 460798; '4.7.1' = 461308; '4.7.2' = 461808; '4.8' = 528040; '4.8.1' = 533320 }
 
 $web = if ($dir) { $null } else { Get-AcaSite $name }
 $root = if ($dir) { Get-AcaServiceRoot $name $dir } else { Get-AcaRoot $web }
@@ -65,26 +112,38 @@ try {
   }
   # 管绑定的是站点的 web.config、服务可执行文件的 .config
   $cfgName = if ($web) { 'web.config' } elseif ($exe) { "$exe.exe.config" }
-  # 可执行文件旁边有同名 runtimeconfig.json 的服务是 .NET Core：按 deps.json 找程序集，目录里的高版本可以顶替引用的低版本，
-  # 下面按 .NET Framework 的规则解析会误报。.NET Core 的站点没有 bin，本来就查不到
-  $rc = "$exe.runtimeconfig.json"
-  $core = $exe -and ((Test-Path -LiteralPath "$root\$rc") -or ((Test-Path -LiteralPath "$work\new\$rc") -and -not (Test-AcaExcluded $rc $exclude)))
-  if (-not $core) {
+  $beforeXml = New-Object xml
+  try { if ($cfgName -and (Test-Path -LiteralPath "$root\$cfgName")) { $beforeXml.Load("$root\$cfgName") } else { $beforeXml.LoadXml('<configuration/>') } } catch {
+    # 写坏了的配置运行时整个忽略
+    "WARN $cfgName on the server is not valid XML, which the runtime ignores; references are checked as if it had no binding redirects"
     $beforeXml = New-Object xml
-    try { if ($cfgName -and (Test-Path -LiteralPath "$root\$cfgName")) { $beforeXml.Load("$root\$cfgName") } else { $beforeXml.LoadXml('<configuration/>') } } catch {
-      # 写坏了的配置运行时整个忽略
-      "WARN $cfgName on the server is not valid XML, which the runtime ignores; references are checked as if it had no binding redirects"
-      $beforeXml = New-Object xml
-      $beforeXml.LoadXml('<configuration/>')
+    $beforeXml.LoadXml('<configuration/>')
+  }
+  # 发布后生效的：排除了的是预检查合好的那份（没有要合的就还是服务器上那份），没排除的是整份发出去的包里那份
+  $afterPath = if (-not $cfgName) { '' } elseif (Test-AcaExcluded $cfgName $exclude) { "$work\config\$cfgName" } else { "$work\new\$cfgName" }
+  $afterXml = $beforeXml
+  if ($afterPath -and (Test-Path -LiteralPath $afterPath)) { $afterXml = New-Object xml; $afterXml.Load($afterPath) }
+  # 发布后服务器上的那份：包里有、没被排除的是包里那份，否则是服务器上原来那份
+  $afterOf = { param($rel) if ((Test-Path -LiteralPath "$work\new\$rel") -and -not (Test-AcaExcluded $rel $exclude)) { "$work\new\$rel" } elseif (Test-Path -LiteralPath "$root\$rel") { "$root\$rel" } }
+  $broken = @(); $lacks = @()
+  # 发布后是 .NET Core 的：站点的 web.config 在根路径上配了 aspNetCore，服务的可执行文件旁边有同名 runtimeconfig.json。
+  # 它按 deps.json 找程序集，目录里的高版本可以顶替引用的低版本，下面按 .NET Framework 的规则解析会误报
+  $handler = if ($web) { Get-AcaCoreHandler $afterXml }
+  if ($handler -or ($exe -and (& $afterOf "$exe.runtimeconfig.json"))) {
+    # 站点的 processPath 是 apphost（.\App.exe），或者是 dotnet、arguments 里是 .\App.dll
+    $pp = if ($handler) { [Environment]::ExpandEnvironmentVariables($handler.GetAttribute('processPath')) }
+    $app = if (-not $handler) { $exe } elseif ($pp -match '([^\\/]+)\.exe$' -and $matches[1] -ne 'dotnet') { $matches[1] } elseif ($handler.GetAttribute('arguments') -match '([^\\/\s"]+)\.dll') { $matches[1] }
+    $rcNew = "$work\new\$app.runtimeconfig.json"; $rcOld = "$root\$app.runtimeconfig.json"
+    # 和服务器上那份一样的，要的运行时原来就要，不是这次发布带来的
+    if ($app -and (Test-Path -LiteralPath $rcNew) -and -not (Test-AcaExcluded "$app.runtimeconfig.json" $exclude) -and -not ((Test-Path -LiteralPath $rcOld) -and (Get-AcaHash ([IO.File]::ReadAllBytes($rcNew))) -eq (Get-AcaHash ([IO.File]::ReadAllBytes($rcOld))))) {
+      # processPath 写了 dotnet.exe 的完整路径，共享框架就只在它旁边找
+      $dotnets = if ($pp -match '\\dotnet\.exe$' -and [IO.Path]::IsPathRooted($pp)) { Split-Path $pp } else { "$env:ProgramFiles\dotnet", "${env:ProgramFiles(x86)}\dotnet" }
+      Get-AcaMissingFrameworks $rcNew $dotnets | ForEach-Object { "WARN $app.runtimeconfig.json in the package asks for $_" }
     }
-    # 发布后生效的：排除了的是预检查合好的那份（没有要合的就还是服务器上那份），没排除的是整份发出去的包里那份
-    $afterPath = if (-not $cfgName) { '' } elseif (Test-AcaExcluded $cfgName $exclude) { "$work\config\$cfgName" } else { "$work\new\$cfgName" }
-    $afterXml = $beforeXml
-    if ($afterPath -and (Test-Path -LiteralPath $afterPath)) { $afterXml = New-Object xml; $afterXml.Load($afterPath) }
+  } else {
     $before = @(Get-AcaRedirects $beforeXml)
     $after = @(Get-AcaRedirects $afterXml)
-
-    $binBefore = @{}; $binAfter = @{}; $refs = @()
+    $binBefore = @{}; $binAfter = @{}; $refs = @(); $targets = @(); $retained = @()
     $pkg = @{}
     foreach ($f in @(Get-ChildItem -LiteralPath "$work\new$sub" -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -match '^\.(dll|exe)$' -and -not (Test-AcaExcluded $_.FullName.Substring($work.Length + 5) $exclude) })) {
       $bytes = [IO.File]::ReadAllBytes($f.FullName)
@@ -94,6 +153,8 @@ try {
       $old = "$root$sub\$($f.Name)"
       $a | Add-Member NoteProperty New (-not ((Test-Path -LiteralPath $old) -and (Get-AcaHash $bytes) -eq (Get-AcaHash ([IO.File]::ReadAllBytes($old)))))
       $pkg[$a.Name] = $a
+      # 目标框架在字节里找：按反射读特性要加载特性类型所在的程序集，只按字节加载时往往找不到
+      if ($a.New -and [Text.Encoding]::ASCII.GetString($bytes) -match '\.NETFramework,Version=v(\d+(?:\.\d+)+)') { $targets += New-Object psobject -Property @{ Version = $matches[1]; From = $f.Name } }
     }
     foreach ($f in @(Get-ChildItem -LiteralPath "$root$sub" -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -match '^\.(dll|exe)$' })) {
       try { $n = [Reflection.AssemblyName]::GetAssemblyName($f.FullName) } catch { continue }
@@ -101,7 +162,9 @@ try {
       if ($pkg.ContainsKey($n.Name)) { continue }
       $binAfter[$n.Name] = $binBefore[$n.Name]
       $a = Read-AcaAssembly ([IO.File]::ReadAllBytes($f.FullName))
-      if ($a) { foreach ($r in $a.Refs) { $refs += New-Object psobject -Property @{ From = $a.Name; Name = $r.Name; Version = $r.Version; Token = Get-AcaToken $r; New = $false } } }
+      if (-not $a) { continue }
+      $retained += $a
+      foreach ($r in $a.Refs) { $refs += New-Object psobject -Property @{ From = $a.Name; Name = $r.Name; Version = $r.Version; Token = Get-AcaToken $r; New = $false } }
     }
     foreach ($a in $pkg.Values) {
       $binAfter[$a.Name] = $a.Identity
@@ -113,7 +176,7 @@ try {
       $refs += New-Object psobject -Property @{ From = $cfgName; Name = $n; Version = [version]$v; Token = $t; New = $oldStrings -notcontains $s }
     }
 
-    $broken = @(); $absent = @()
+    $absent = @()
     foreach ($r in $refs) {
       $why = Resolve-AcaRef $r $after $binAfter
       if (-not $why) { continue }
@@ -123,11 +186,30 @@ try {
     }
     $broken = @($broken | Select-Object -Unique)
     $absent | Select-Object -Unique | ForEach-Object { "WARN referenced by the package but found neither in $(if ($web) { 'bin' } else { 'the directory' }) nor in the GAC: $_" }
-    if ($broken) {
-      "References this deploy breaks$(if ($checkOnly -and -not $force) { ' (deploying needs --force)' }):"
-      $broken | ForEach-Object { "  $_" }
-      if (-not $checkOnly -and -not $force) { throw "$($broken.Count) references would fail to load after this deploy; fix the binding redirects in the package's $cfgName, or pass --force" }
+
+    # 进程的位数：站点看应用池，服务看可执行文件。这次发布换了可执行文件的位数，原来就在的程序集也要重新对一遍
+    $exeAfter = if ($exe) { & $afterOf "$exe.exe" }
+    $bits = if ($web) { if ((Get-Item -LiteralPath "IIS:\AppPools\$($web.applicationPool)").enable32BitAppOnWin64) { 32 } else { 64 } } elseif ($exeAfter) { Get-AcaExeBits $exeAfter }
+    $flipped = $exeAfter -and (Test-Path -LiteralPath "$root\$exe.exe") -and (Get-AcaExeBits "$root\$exe.exe") -ne $bits
+    $wrong = @(@($pkg.Values) + $retained | Where-Object { ($_.New -or $flipped) -and $bits -and $_.Bits -and $_.Bits -ne $bits } | ForEach-Object Name)
+    if ($wrong) { $lacks += "the $(if ($web) { 'app pool' } else { 'service' }) runs $bits-bit, but these load only in $(if ($bits -eq 32) { 64 } else { 32 })-bit: $($wrong -join ', ')" }
+    # 这次发布带来的目标框架：变了的程序集编译时的目标，和配置里新写上的 targetFramework、sku
+    $oldTargets = @(Get-AcaConfigTargets $beforeXml)
+    foreach ($t in @(Get-AcaConfigTargets $afterXml | Where-Object { $oldTargets -notcontains $_ })) { $from, $v = $t -split '\|'; $targets += New-Object psobject -Property @{ Version = $v; From = "$cfgName $from" } }
+    $release = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full' -ErrorAction SilentlyContinue).Release
+    $need = @($targets | Where-Object { $acaReleases.Contains($_.Version) -and $release -lt $acaReleases[$_.Version] })
+    if ($need) {
+      $has = @($acaReleases.Keys | Where-Object { $release -ge $acaReleases[$_] })[-1]
+      $lacks += ".NET Framework $(($need | Sort-Object { [version]$_.Version } | Select-Object -Last 1).Version), targeted by $(($need | ForEach-Object From | Select-Object -Unique | Select-Object -First 10) -join ', '): this server has $(if ($has) { $has } else { 'nothing from 4.5 on' })"
     }
+  }
+
+  $blocking = if ($checkOnly -and -not $force) { ' (deploying needs --force)' }
+  if ($broken) { "References this deploy breaks${blocking}:"; $broken | ForEach-Object { "  $_" } }
+  if ($lacks) { "This server lacks what the package needs${blocking}:"; $lacks | ForEach-Object { "  $_" } }
+  if (-not $checkOnly -and -not $force) {
+    if ($broken) { throw "$($broken.Count) references would fail to load after this deploy; fix the binding redirects in the package's $cfgName, or pass --force" }
+    if ($lacks) { throw 'This server lacks what the package needs; install it on the server, or pass --force' }
   }
   if ($checkOnly) { 'CHECK OK (not deployed)' } else { 'Pre-check OK' }
   $passed = $true

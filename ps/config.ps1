@@ -4,9 +4,6 @@
 $acaTag = '\G<[^\s/>]+(?:\s+[^\s=/>]+\s*=\s*(?:"[^"]*"|''[^'']*''))*\s*/?>'
 # 开始标签里带 configSource 的节放在别的文件里，自己不能再有别的属性和内容，否则 .NET 整份配置都不认
 $acaExternal = '\sconfigSource\s*='
-# 在根路径上生效的节的容器：configuration 本身，和 path 为空或 "." 的 location；写在子路径 location 里的只对子路径生效。
-# 按 local-name 找：ASP.NET 2.0 的工具给 configuration 加过默认命名空间，老站点的 web.config 还带着
-$acaRoots = "(/* | /*/*[local-name()='location'][not(@path) or @path='' or @path='.'])"
 
 # 按从根开始的路径找元素，返回每处的 Index、Length、Empty（自闭合）；注释和 CDATA 里同名的文字不会误中
 function Find-AcaElements($text, $path) {

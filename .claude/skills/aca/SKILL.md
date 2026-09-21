@@ -99,6 +99,8 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
    `NOTE: new files under excluded paths are not deployed` 列的文件发布也不会带上。两种都告诉用户，新代码用到的话要先在服务器上补好。
    有 `References this deploy breaks` 时，发出去这些程序集引用会加载失败，多半是升级了 NuGet 包却没带绑定重定向：告诉用户在项目配置里补上重定向、让包带着环境配置再发，用户确认没问题才加 `--force`。
    `WARN referenced by the package but found neither ...` 是新代码引用的程序集哪里都没有，可能是发布输出漏了文件，告诉用户。
+   有 `This server lacks what the package needs` 时，服务器缺包要的 .NET Framework 版本，或者程序集的位数和进程对不上：告诉用户在服务器上装好、调好，或者换构建，用户确认没问题才加 `--force`。
+   `WARN <应用>.runtimeconfig.json in the package asks for ...` 是服务器上多半没装包要的 .NET Core 共享框架，发出去可能起不来，告诉用户先确认。
    报 `Package root contains <环境配置>` 时，列进 `exclude` 还是配 `overwriteConfig` 由用户定：`overwriteConfig` 会拿包里那份整份覆盖服务器上的，只有环境值都不在这份文件里时才对。
    `NOTE: <环境配置> on the server differs from the package's copy` 是这份配置要被包里那份整份覆盖，而服务器上那份内容不一样，可能有人在服务器上加过设置（如 `environmentVariables`）：让用户确认那些内容不要了，或者先挪到别处，再发。
 3. 发布会让站点或服务停几秒到几十秒，执行前向用户确认目标和包路径。
