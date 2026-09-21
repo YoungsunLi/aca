@@ -77,7 +77,7 @@ aca skill install  # 给 Claude Code、Codex 装上 skill，升级 aca 后再跑
 
 凭证按阿里云 SDK 的[默认凭证链](https://help.aliyun.com/zh/sdk/developer-reference/v2-manage-node-js-access-credentials)查找，和阿里云 CLI 共用：`aliyun configure` 配过就不用再配，也可以设环境变量 `ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET`，两处都配了时环境变量优先。
 
-**RAM 权限**：`ecs:DescribeInstances`、`ecs:RunCommand`、`ecs:DescribeInvocationResults`、`oss:PutObject`、`oss:GetObject`、`oss:ListObjects`、`oss:DeleteObject`（bucket 开了版本控制时，`pull`、`diff` 和 `certs replace` 删 OSS 上中转的文件要 `oss:DeleteObjectVersion`），站点配了 `clb` 还要 `slb:DescribeLoadBalancerAttribute`、`slb:DescribeLoadBalancerListeners`、`slb:DescribeHealthStatus`、`slb:SetBackendServers`，取云端证书要 `yundun-cert:ListUserCertificateOrder`、`yundun-cert:GetUserCertificateDetail`（数字证书管理服务只支持操作级授权，资源只能写 `*`）。
+**RAM 权限**：`ecs:DescribeInstances`、`ecs:RunCommand`、`ecs:DescribeInvocationResults`、`oss:PutObject`、`oss:GetObject`、`oss:ListObjects`、`oss:DeleteObject`（bucket 开了版本控制时，`pull`、`logs`、`diff` 和 `certs replace` 删 OSS 上中转的文件要 `oss:DeleteObjectVersion`），站点配了 `clb` 还要 `slb:DescribeLoadBalancerAttribute`、`slb:DescribeLoadBalancerListeners`、`slb:DescribeHealthStatus`、`slb:SetBackendServers`，取云端证书要 `yundun-cert:ListUserCertificateOrder`、`yundun-cert:GetUserCertificateDetail`（数字证书管理服务只支持操作级授权，资源只能写 `*`）。
 
 > [!WARNING]
 > 云助手以 SYSTEM 身份执行脚本，`ecs:RunCommand` 授权到哪些实例，持有这份 AccessKey 的人和 Agent 就是哪些实例的管理员，按实例 ID 授权，不要给 `*`。
@@ -101,6 +101,8 @@ aca sites                                       # 列出站点与项目、发布
 aca services                                    # 列出 Windows 服务与它们在服务器上的目录
 aca run web1 "Get-Website | select name,state"  # 以 SYSTEM 执行任意 PowerShell
 aca pull web1 "C:\inetpub\logs\LogFiles\W3SVC1\u_ex260919.log"  # 把服务器上的文件拉到本机当前目录
+aca logs "Default Web Site"                     # 每台服务器上这个站点最新的 20 行 IIS 日志
+aca logs "Default Web Site" --since 30m -n 500  # 最近 30 分钟里最新的 500 行
 aca deploy "Default Web Site" ./publish --check # 只预检查，打印将覆盖/新增的文件，不停站
 aca deploy "Default Web Site" ./publish -m "release-2026-09"  # 目录或 zip；-m 写进发布记录
 aca deploy "Default Web Site" --from-stage -m "release-2026-09"  # 直接发预发布站最近一次发布的那个包
@@ -136,6 +138,15 @@ aca 把服务器上的一个文件拉到本机，不受云助手输出上限的�
 
 - **本地路径默认是当前目录下的同名文件**，给的是已有目录就放进这个目录；本机已有这个文件时 aca 报错，不覆盖。
 - **文件经 OSS 中转**：服务器用 aca 这次生成的一次性密钥加密后上传，aca 下载解密后就删掉 OSS 上的这份；密钥留在云助手的执行记录里。
+
+### `aca logs`
+
+aca 按 IIS 里站点的日志设置，在每台服务器上找到这个站点的日志文件，取最新的 `-n` 行（默认 20）。
+
+- **给了 `--since`、`--until` 就只取时间段里的行**，仍是最新的 `-n` 行，时间段里可能还有更早的行时 aca 会提示。时间写本机时间（`"2026-09-21 10:00"`，只写日期是那天零点）或往前推的时长（`30m`、`2h`、`1d`）。
+- **日志里的时间是 UTC**：IIS 的 W3C 格式就这样记，aca 原样输出，只把 `--since`、`--until` 换算成 UTC 去比。
+- **刚发生的请求也读得到**：HTTP.sys 攒着日志过一会儿才写盘，aca 读之前先让它写下去。
+- **只读 W3C 格式**（IIS 的默认格式）；取到的行经 OSS 中转，和 `aca pull` 一样加密、读完就删。
 
 ### `aca diff`
 

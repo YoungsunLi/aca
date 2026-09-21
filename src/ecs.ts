@@ -16,6 +16,13 @@ const PS_PREAMBLE = `[Console]::OutputEncoding = [Text.Encoding]::Default
 trap { 'ERROR: ' + $_.Exception.Message; exit 1 }
 `;
 
+/** 只读、互不影响的操作几台服务器同时跑，一台台来的话时间要相加 */
+export async function inParallel<T>(cfg: Config, instances: string[], run: (instance: string) => Promise<T>): Promise<T[]> {
+  // SDK 的默认凭证链第一次取凭证时被并发调用，会有调用拿到链上还没试通的那一环而报错；先取一次把链定下来
+  await cfg.credential.getCredential();
+  return Promise.all(instances.map(run));
+}
+
 export class Ecs {
   #client: InstanceType<typeof $Ecs.default>;
   #region: string;

@@ -1,6 +1,6 @@
 import { text } from 'node:stream/consumers';
 import { type Config, getTarget, targetVars } from './config.ts';
-import { Ecs } from './ecs.ts';
+import { Ecs, inParallel } from './ecs.ts';
 import { viaOss } from './oss.ts';
 import { renderScript } from './ps.ts';
 
@@ -17,15 +17,12 @@ type Listing = { instance: string; scope: string; files: number; bytes: number; 
 type Group = { hash: string; time: string; instances: string[] };
 export type Drift = { target: string; sub: string; listings: Listing[]; compared: number; files: { path: string; groups: Group[] }[] };
 
-// 几台服务器同时扫：只读，互不影响，一台台来的话各台算哈希的时间要相加
 export async function diff(cfg: Config, name: string, sub: string): Promise<Drift> {
   const target = getTarget(cfg, name);
   if (target.instances.length < 2) throw new Error(`${name} runs on a single server (${target.instances[0]}), so there is nothing to compare`);
-  // SDK 的默认凭证链第一次取凭证时被并发调用，会有调用拿到链上还没试通的那一环而报错；先取一次把链定下来
-  await cfg.credential.getCredential();
   const ecs = new Ecs(cfg);
   const vars = { ...targetVars(name, target), SUBPATH: sub, EXCLUDE: (target.exclude ?? []).join('\n') };
-  const listings = await Promise.all(target.instances.map((instance) => listFiles(cfg, ecs, vars, instance)));
+  const listings = await inParallel(cfg, target.instances, (instance) => listFiles(cfg, ecs, vars, instance));
   // 所有服务器上的文件，键是比对用的小写路径，值是报出来时用的原样写法
   const paths = new Map<string, string>();
   for (const l of listings) for (const [key, e] of l.entries) paths.set(key, e.path);

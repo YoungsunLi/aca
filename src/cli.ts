@@ -11,6 +11,7 @@ import { deploy, type DeployOptions } from './deploy.ts';
 import { diff, printDiff } from './diff.ts';
 import { Ecs, type RunResult } from './ecs.ts';
 import { targetLease } from './lease.ts';
+import { type LogOptions, readLogs } from './logs.ts';
 import { renderScript } from './ps.ts';
 import { pull } from './pull.ts';
 import { planRollback, printPlan, rollback } from './rollback.ts';
@@ -54,6 +55,18 @@ program.command('pull <instance> <file> [local]').description('Copy a file from 
     const { result, saved } = await pull(loadConfig(), instance, file, local);
     report(result);
     if (saved) console.log(`Saved ${saved}`);
+  });
+
+program.command('logs <site>').description('Print the IIS log of a site from each of its servers: the latest lines, or the latest lines in a time range; times in the log are UTC')
+  .option('-n, --tail <lines>', 'lines to show from each server', '20')
+  .option('--since <time>', 'start of the time range: a local time like "2026-09-21 10:00", or a duration back from now like 30m, 2h, 1d')
+  .option('--until <time>', 'end of the time range, in the same forms as --since')
+  .action(async (site: string, opts: LogOptions) => {
+    for (const { instance, result, lines } of await readLogs(loadConfig(), site, opts)) {
+      console.log(`== ${instance}`);
+      report(result);
+      if (lines) console.log(lines.trimEnd());
+    }
   });
 
 program.command('deploy <target> [path]').description('Deploy a directory or zip to a configured IIS site or Windows service, one server at a time; path defaults to its publish directory')

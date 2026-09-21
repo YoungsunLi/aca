@@ -77,7 +77,7 @@ The keys of `services` are Windows service names (the ones `sc query` lists, not
 
 Credentials are resolved by the Alibaba Cloud SDK's [default credential chain](https://www.alibabacloud.com/help/en/sdk/developer-reference/v2-manage-node-js-access-credentials), shared with the Alibaba Cloud CLI: once you have run `aliyun configure` there is nothing more to set up; you can also set the environment variables `ALIBABA_CLOUD_ACCESS_KEY_ID` and `ALIBABA_CLOUD_ACCESS_KEY_SECRET`, which take precedence over `aliyun configure`.
 
-**RAM permissions**: `ecs:DescribeInstances`, `ecs:RunCommand`, `ecs:DescribeInvocationResults`, `oss:PutObject`, `oss:GetObject`, `oss:ListObjects`, `oss:DeleteObject` (on a versioned bucket, `pull`, `diff` and `certs replace` need `oss:DeleteObjectVersion` to delete the files they pass through OSS), and `slb:DescribeLoadBalancerAttribute`, `slb:DescribeLoadBalancerListeners`, `slb:DescribeHealthStatus` and `slb:SetBackendServers` for sites with `clb`; taking a certificate from the cloud needs `yundun-cert:ListUserCertificateOrder` and `yundun-cert:GetUserCertificateDetail` (Certificate Management Service authorizes per operation, so the resource can only be `*`).
+**RAM permissions**: `ecs:DescribeInstances`, `ecs:RunCommand`, `ecs:DescribeInvocationResults`, `oss:PutObject`, `oss:GetObject`, `oss:ListObjects`, `oss:DeleteObject` (on a versioned bucket, `pull`, `logs`, `diff` and `certs replace` need `oss:DeleteObjectVersion` to delete the files they pass through OSS), and `slb:DescribeLoadBalancerAttribute`, `slb:DescribeLoadBalancerListeners`, `slb:DescribeHealthStatus` and `slb:SetBackendServers` for sites with `clb`; taking a certificate from the cloud needs `yundun-cert:ListUserCertificateOrder` and `yundun-cert:GetUserCertificateDetail` (Certificate Management Service authorizes per operation, so the resource can only be `*`).
 
 > [!WARNING]
 > Cloud Assistant runs scripts as SYSTEM: whoever holds this AccessKey, human or agent, is an administrator of every instance `ecs:RunCommand` is granted on. Grant it per instance ID, never `*`.
@@ -101,6 +101,8 @@ aca sites                                       # list sites with their project,
 aca services                                    # list Windows services with their directory on the servers
 aca run web1 "Get-Website | select name,state"  # run any PowerShell as SYSTEM
 aca pull web1 "C:\inetpub\logs\LogFiles\W3SVC1\u_ex260919.log"  # copy a file from a server to the current directory
+aca logs "Default Web Site"                     # the latest 20 lines of the site's IIS log on each server
+aca logs "Default Web Site" --since 30m -n 500  # the latest 500 lines of the last 30 minutes
 aca deploy "Default Web Site" ./publish --check # pre-check only: list the files to overwrite and add, the site keeps running
 aca deploy "Default Web Site" ./publish -m "release-2026-09"  # directory or zip; -m goes into the deploy log
 aca deploy "Default Web Site" --from-stage -m "release-2026-09"  # deploy the package the staging site last deployed
@@ -136,6 +138,15 @@ aca copies a file from a server to this machine, free of the Cloud Assistant out
 
 - **The local path defaults to a file of the same name in the current directory**; given an existing directory, the file goes into it. If the local file already exists, aca refuses to overwrite it.
 - **The file goes through OSS**: the server encrypts it with a one-time key aca generates for this pull before uploading; aca downloads and decrypts it, then deletes it from OSS. The key stays in the Cloud Assistant invocation history.
+
+### `aca logs`
+
+aca finds the site's log files on each server from the site's logging settings in IIS and prints the latest `-n` lines (20 by default).
+
+- **With `--since` or `--until`, only lines in that time range count**, still the latest `-n` of them; aca says so when the range may hold earlier lines. Give a local time (`"2026-09-21 10:00"`; a date alone means midnight) or a duration back from now (`30m`, `2h`, `1d`).
+- **Times in the log are UTC**: that is how the IIS W3C format records them; aca prints the lines as they are and converts only `--since` and `--until` to UTC to compare.
+- **Requests from a moment ago are there too**: HTTP.sys holds log entries for a while before writing them, and aca has it write them out before reading.
+- **Only the W3C format** (the IIS default) is read; the lines go through OSS, encrypted and deleted after reading, like `aca pull`.
 
 ### `aca diff`
 

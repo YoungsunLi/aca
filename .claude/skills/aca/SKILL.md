@@ -11,7 +11,7 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
 
 云助手以 SYSTEM 身份执行，用 `aca run` 就等于拿到生产机的管理员 shell，其它命令也都跑在这个权限上。
 
-- 不改站点和服务的直接做：`instances`、`sites`、`services`、`status`、`diff`、`certs`、`certs cloud`、`clb`、`pull`、各命令的 `--check`，以及 `aca run` 里只查询不改动的脚本。
+- 不改站点和服务的直接做：`instances`、`sites`、`services`、`status`、`logs`、`diff`、`certs`、`certs cloud`、`clb`、`pull`、各命令的 `--check`，以及 `aca run` 里只查询不改动的脚本。
 - 会改服务器的只在用户本轮明确要求时做：`deploy`、`rollback` 按下面的发布流程确认；
   `clb restore` 会让负载均衡重新把请求转给这台服务器，先确认它上面的站点正常，用户同意后再放回；
   `certs replace` 先 `--check`，把每台服务器要换的条目和条目上的站点给用户看，确认后再换；
@@ -37,6 +37,11 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
   输出太长会被截断（aca 会提示丢了多少字节），在脚本里先筛选，要看整个文件用 `aca pull`
 - `aca pull <实例ID或别名> <服务器上的文件> [本地路径]` — 把服务器上的一个文件拉到本机，不受输出上限限制，正在写的日志也能拉。
   本地路径是已有目录时放进这个目录，省略时是当前目录；本机已有同名文件就报错，拉几台服务器上的同一个文件要分别指定本地路径
+- `aca logs <站点> [-n 行数] [--since 时间] [--until 时间]` — 每台服务器上这个站点的 IIS 日志，每台服务器取最新的 `-n` 行（默认 20）。
+  给了 `--since`、`--until` 就只取时间段里最新的 `-n` 行，时间写本机时间（`"2026-09-21 10:00"`）或往前推的时长（`30m`、`2h`、`1d`）；
+  时间段里可能还有更早的行时输出 `Showing the last <N> lines in the time range`，要看全就加大 `-n`。每行几百字节，行多时用 grep 筛状态码、URL，别整段读。
+  日志里的时间是 UTC，和用户说的时间对照前先换算。每台服务器先列出读了哪几个日志文件，要整个文件用 `aca pull`。
+  报 `IIS logging is off for this site` 的服务器没在记这个站点的日志，读到的是关日志之前的旧行，不能据此判断它有没有收到请求
 - `aca deploy <站点或服务> [目录或 zip] --check` — 上传并在每台服务器上预检查，打印将覆盖/新增的文件，不停站点也不停服务
 - `aca deploy <站点或服务> [目录或 zip] -m "<说明>"` — 按配置里的服务器顺序逐台预检查、停、备份、覆盖、启。
   路径省略时用配置里的 publish 目录。`-m` 写进服务器上的发布记录，作为这次发布的标识，
