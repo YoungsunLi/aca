@@ -108,6 +108,7 @@ aca deploy "Default Web Site" ./publish -m "release-2026-09"  # 目录或 zip；
 aca deploy "Default Web Site" --from-stage -m "release-2026-09"  # 直接发预发布站最近一次发布的那个包
 aca deploy MyApp.Worker ./publish -m "release-2026-09"  # 发 Windows 服务，参数和站点一样
 aca status "Default Web Site"                   # 每台服务器上最新的文件时间、服务的运行状态和最近 5 条发布/回退记录
+aca status                                      # 每个站点和服务在每台服务器上一行：状态、最新文件时间、最后一条发布/回退记录
 aca diff "Default Web Site"                     # 按内容哈希比对每台服务器上的文件，列出不一样的
 aca diff "Default Web Site" bin                 # 只比站点目录下的一个目录
 aca certs                                       # 每台服务器上运行中站点的 https 绑定实际发出的证书

@@ -108,6 +108,7 @@ aca deploy "Default Web Site" ./publish -m "release-2026-09"  # directory or zip
 aca deploy "Default Web Site" --from-stage -m "release-2026-09"  # deploy the package the staging site last deployed
 aca deploy MyApp.Worker ./publish -m "release-2026-09"  # deploy a Windows service, same options as a site
 aca status "Default Web Site"                   # newest file time, a service's state + last 5 deploy/rollback entries of each server
+aca status                                      # a line per server for every site and service: state, newest file time, last deploy/rollback
 aca diff "Default Web Site"                     # compare the files on every server by content hash and list the ones that differ
 aca diff "Default Web Site" bin                 # compare one directory under the site directory only
 aca certs                                       # certificates the HTTPS bindings of running sites actually serve on each server

@@ -12,6 +12,7 @@ import { diff, printDiff } from './diff.ts';
 import { Ecs, type RunResult } from './ecs.ts';
 import { targetLease } from './lease.ts';
 import { type LogOptions, readLogs } from './logs.ts';
+import { overview } from './overview.ts';
 import { renderScript } from './ps.ts';
 import { pull } from './pull.ts';
 import { planRollback, printPlan, rollback } from './rollback.ts';
@@ -81,14 +82,21 @@ program.command('deploy <target> [path]').description('Deploy a directory or zip
     await reportEach(deploy(loadConfig(), name, path, opts));
   });
 
-program.command('status <target>').description('Show what each server is running: newest file time, for a service its state, and the last 5 deploy/rollback log entries')
-  .action(async (name: string) => {
+program.command('status [target]').description('Show what each server is running: newest file time, for a service its state, and the last 5 deploy/rollback log entries; without a target, one line for every configured site and service on each of its servers, with its state, newest file time and last log entry')
+  .action(async (name: string | undefined) => {
     const cfg = loadConfig();
+    if (!name) {
+      const rows = await overview(cfg);
+      console.log(['Target', 'Instance', 'State', 'Newest file', 'Last deploy/rollback'].join('\t'));
+      for (const row of rows) console.log(row.join('\t'));
+      if (rows.some(([, , state]) => state.startsWith('ERROR: '))) process.exitCode = 1;
+      return;
+    }
     const target = getTarget(cfg, name);
     const ecs = new Ecs(cfg);
     for (const instance of target.instances) {
       console.log(`== ${instance}`);
-      report(await ecs.runPowerShell(instance, renderScript('status', targetVars(name, target), ['target']), 120));
+      report(await ecs.runPowerShell(instance, renderScript('status', targetVars(name, target), ['target', 'newest']), 120));
     }
   });
 
