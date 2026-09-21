@@ -82,7 +82,8 @@ export function loadConfig(): Config {
  * 带 . 和 .. 的写法匹配不上会悄悄失效，绝对路径指到目标目录外面去
  */
 export function relativePath(p: string): string {
-  const n = win32.normalize(p).replace(/^\\+|\\+$/g, '');
+  // conf、null 这种"Windows 保留设备名再多一个字符"的名字，Node 24.16 的 normalize 会补上 .\，22.12 还不会
+  const n = win32.normalize(p).replace(/^(?:\.\\)+|^\\+|\\+$/g, '');
   return !n || n === '.' || n === '..' || n.startsWith('..\\') || win32.isAbsolute(n) ? '' : n;
 }
 
