@@ -50,13 +50,16 @@ export async function* deploy(cfg: Config, name: string, path: string | undefine
     const vars = { ...targetVars(name, target), WORK: `aca-${deployId}-${randomBytes(4).toString('hex')}`, DEPLOY_ID: deployId, SHA256: pkg.sha256, EXCLUDE: exclude.join('\n'), FORCE: String(force) };
     // 先查完每台服务器再动手：发到一半才发现后面的服务器过不了预检查，负载均衡后面就是新旧两个版本
     const checkScript = renderScript('check', { ...vars, URL: await signForEcs(cfg, object, timeout), CHECK_ONLY: String(check) }, ['target', 'inspect']);
-    // 分析解开的包单独一条命令：和预检查放在一起，连同签名 URL 会超出 RunCommand 的 24 KB
-    const analyzeScript = renderScript('analyze', { ...vars, CHECK_ONLY: String(check) }, ['target', 'config']);
+    // 分析解开的包各自一条命令：和预检查放在一起，连同签名 URL 会超出 RunCommand 的 24 KB
+    const scripts = [checkScript, renderScript('analyze', vars, ['target', 'config']), renderScript('refs', { ...vars, CHECK_ONLY: String(check) }, ['target'])];
     const checks = await inParallel(cfg, instances, async (instance): Promise<[string, RunResult]> => {
-      const c = await ecs.runPowerShell(instance, checkScript, timeout);
-      if (c.status !== 'Success') return [instance, c];
-      const a = await ecs.runPowerShell(instance, analyzeScript, timeout);
-      return [instance, { ...a, output: c.output + a.output, dropped: c.dropped + a.dropped }];
+      let r = await ecs.runPowerShell(instance, scripts[0], timeout);
+      for (const script of scripts.slice(1)) {
+        if (r.status !== 'Success') break;
+        const next = await ecs.runPowerShell(instance, script, timeout);
+        r = { ...next, output: r.output + next.output, dropped: r.dropped + next.dropped };
+      }
+      return [instance, r];
     });
     yield* checks;
     if (check) return;

@@ -1,6 +1,5 @@
 $name = '__NAME__'
 $dir = '__DIR__'
-$checkOnly = '__CHECK_ONLY__' -eq 'true'
 $work = Join-Path $env:TEMP '__WORK__'
 
 $web = if ($dir) { $null } else { Get-AcaSite $name }
@@ -17,15 +16,14 @@ try {
     $changes = @($r.Lines | Where-Object { $_ -notmatch '^WARN ' })
     if ($changes) { "$($f.Name) follows the package in:"; $changes }
     $r.Lines | Where-Object { $_ -match '^WARN ' } | ForEach-Object { "WARN $($f.Name): $($_.Substring(5))" }
-    if ($checkOnly -or -not $changes) { continue }
-    # 发布那一步拿它换掉服务器上那份；记下合并时读到的那份的哈希，到时对不上就是这之后有人改过
+    if (-not $changes) { continue }
+    # 引用检查按它解析，发布那一步拿它换掉服务器上那份；记下合并时读到的那份的哈希，到时对不上就是这之后有人改过
     $dst = Join-Path $work 'config'
     New-Item -ItemType Directory -Path $dst -Force | Out-Null
     [IO.File]::WriteAllText((Join-Path $dst $f.Name), $r.Text, $cfg.Encoding)
     Set-Content -LiteralPath (Join-Path $dst "$($f.Name).base") -Value $cfg.Hash
   }
-  if ($checkOnly) { 'CHECK OK (not deployed)' } else { 'Pre-check OK' }
   $passed = $true
 } finally {
-  if ($checkOnly -or -not $passed) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
+  if (-not $passed) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
 }

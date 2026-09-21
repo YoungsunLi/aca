@@ -95,6 +95,8 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
    报 `Files older than the copies on the server` 时，要么包是旧构建，要么服务器上有人手改过；让用户确认后才加 `--force`，不要自己加。
    有 `<环境配置> follows the package in:` 时，下面每行是发布时 aca 要改服务器上这份配置的地方（`+` 新增，`~` 改成包里的，`kept` 只在服务器上有、保留），给用户过目；
    `WARN <环境配置>: ... not synced` 是这一段 aca 合不了、保持服务器原样，告诉用户。
+   有 `References this deploy breaks` 时，发出去这些程序集引用会加载失败，多半是升级了 NuGet 包却没带绑定重定向：告诉用户在项目配置里补上重定向、让包带着环境配置再发，用户确认没问题才加 `--force`。
+   `WARN referenced by the package but found neither ...` 是新代码引用的程序集哪里都没有，可能是发布输出漏了文件，告诉用户。
 3. 发布会让站点或服务停几秒到几十秒，执行前向用户确认目标和包路径。
    配了 `stage` 的正式站要求包先在预发布站发过且是那边最后一次成功发布，发这种站用 `--from-stage`（`--check` 时也加上），发的就是预发布站验证过的那个包；
    报错让先发预发布站（`deploy to the stage site`）时告诉用户要先发预发布站并验证，不要用 `--skip-stage` 绕过，除非用户明确要求；
