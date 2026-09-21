@@ -1,6 +1,6 @@
 {
   "name": "@ninesols/aca-cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "通过阿里云云助手管理 Windows ECS、发布 IIS 站点和 Windows 服务、检查和更换 SSL 证书的 CLI，附带 Agent Skill",
   "keywords": [
     "agent-skills",

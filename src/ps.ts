@@ -2,8 +2,9 @@ import { readFileSync } from 'node:fs';
 
 // 脚本放在仓库顶层 ps/，src/ 和编译出的 dist/ 用同一个相对路径都能找到。
 // 整行注释不发到服务器：RunCommand 内容 base64 后上限 24 KB，STS 类凭证签出的 URL 长度不定；
-// 脚本里不用 here-string，行首的 # 只会是注释
-const read = (name: string) => readFileSync(new URL(`../ps/${name}.ps1`, import.meta.url), 'utf8').replace(/^[ \t]*#.*\r?\n/gm, '');
+// 脚本里不用 here-string，行首的 # 只会是注释。
+// 换行统一成 LF 也是为了这个上限：Windows 上 autocrlf 检出的是 CRLF，每行多一个字节
+const read = (name: string) => readFileSync(new URL(`../ps/${name}.ps1`, import.meta.url), 'utf8').replace(/^[ \t]*#.*\r?\n/gm, '').replace(/\r\n/g, '\n');
 const COMMON = read('common');
 
 // 占位符连同两侧单引号整体换成 base64 解码表达式，值里的任何字符都进不了 PowerShell 语法。
