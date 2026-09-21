@@ -29,9 +29,7 @@ $passed = $false
 try {
   Invoke-WebRequest -Uri $url -OutFile "$work\pkg.zip" -UseBasicParsing
   # 对 OSS 有写权限的人能在各服务器下载前把包换掉
-  $zip = [IO.File]::OpenRead("$work\pkg.zip")
-  try { $got = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($zip)) -replace '-' } finally { $zip.Close() }
-  if ($got -ne $sha256) { throw 'Downloaded package does not match the local SHA-256: the zip changed during upload, or the package on OSS was replaced' }
+  if ((Get-AcaFileHash "$work\pkg.zip") -ne $sha256) { throw 'Downloaded package does not match the local SHA-256: the zip changed during upload, or the package on OSS was replaced' }
   [IO.Compression.ZipFile]::ExtractToDirectory("$work\pkg.zip", $new)
   Remove-Item -LiteralPath "$work\pkg.zip"
   # 包里文件名的 [ ] 会被当通配符，按路径操作的命令都用 -LiteralPath
@@ -39,14 +37,21 @@ try {
   # 全量构建的包会带上 exclude 里的文件，不能覆盖
   $files = @($all | Where-Object { -not (Test-AcaExcluded $_.FullName.Substring($new.Length + 1) $exclude) })
   if ($files.Count -lt $all.Count) { "Excluded $($all.Count - $files.Count) files ($($exclude -join ', '))" }
+  $excluded = @($all | ForEach-Object { $_.FullName.Substring($new.Length + 1) } | Where-Object { Test-AcaExcluded $_ $exclude })
   # 构建新加在 exclude 路径下的文件不会发出去，服务器上就一直没有；服务器上没有环境配置由 analyze 提示
-  $hidden = @($all | ForEach-Object { $_.FullName.Substring($new.Length + 1) } | Where-Object { (Test-AcaExcluded $_ $exclude) -and -not (Test-AcaEnvConfig $web $_) -and -not (Test-Path -LiteralPath (Join-Path $root $_)) })
+  $hidden = @($excluded | Where-Object { -not (Test-AcaEnvConfig $web $_) -and -not (Test-Path -LiteralPath (Join-Path $root $_)) })
   if ($hidden) { "NOTE: new files under excluded paths are not deployed: $(($hidden | Select-Object -First 20) -join ', ')" }
+  # 被排除的文件包里那份和上次发布时的不一样，是开发改过它，服务器上那份可能也得跟着改
+  $last = @(Get-AcaBackups $root)[-1]
+  $was = if ($last) { (Read-AcaManifest $last.FullName).Excluded } else { @{} }
+  $changed = @($excluded | Where-Object { $was[$_] -and $was[$_] -ne (Get-AcaFileHash (Join-Path $new $_)) })
+  if ($changed) { "NOTE: excluded files changed in the package since the last deploy, the server's copies may need the same change: $(($changed | Select-Object -First 20) -join ', ')" }
   if (-not $files) { throw 'Package is empty' }
   $rels = @($files | ForEach-Object { $_.FullName.Substring($new.Length + 1) })
   $src = @($rels | Where-Object { $_ -match '^(\.git|\.vs|obj|node_modules)\\|\.(csproj|sln|cs)$' })
   if ($src) { throw "Package looks like a source directory, not publish output, e.g. $($src[0..2] -join ', ')" }
   if ($rels -contains 'aca-manifest.txt') { throw 'Package root contains aca-manifest.txt, which would overwrite the backup manifest of the same name; remove it from the package' }
+  if (@($rels | Where-Object { $_.StartsWith($acaExcludedTag) })) { throw "Package contains files under $acaExcludedTag, a path the backup manifest keeps for its own records; remove them from the package" }
   $rootTop = @(Get-ChildItem -LiteralPath $root | ForEach-Object Name)
   $pkgTop = @($rels | ForEach-Object { ($_ -split '\\')[0] } | Select-Object -Unique)
   if ($rootTop -and -not @($pkgTop | Where-Object { $rootTop -contains $_ })) {

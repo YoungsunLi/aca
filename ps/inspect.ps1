@@ -6,6 +6,21 @@ function Get-AcaBackups($root, $kind = 'bak') {
     Where-Object { $_.Name -match ('^' + [regex]::Escape($prefix) + '\d{8}-\d{6}$') -and (Test-Path -LiteralPath (Join-Path $_.FullName 'aca-manifest.txt')) } |
     Sort-Object Name
 }
+# 清单第一行是发布 ID，其余是这次新增的文件，回退时删掉。包里被排除的文件的哈希也记在这里，下次发布拿来比包里那份变没变；
+# 写成服务器上不会有的相对路径，旧版 aca 回退时当成新增文件去删，找不到就跳过
+$acaExcludedTag = '.aca-excluded\'
+function Read-AcaManifest($backup) {
+  $lines = @(Get-Content -LiteralPath (Join-Path $backup 'aca-manifest.txt'))
+  $rest = @($lines | Select-Object -Skip 1)
+  $excluded = @{}
+  foreach ($l in @($rest | Where-Object { $_.StartsWith($acaExcludedTag) })) { $hash, $rel = $l.Substring($acaExcludedTag.Length) -split '\\', 2; $excluded[$rel] = $hash }
+  New-Object psobject -Property @{ Id = $lines[0]; Added = @($rest | Where-Object { -not $_.StartsWith($acaExcludedTag) }); Excluded = $excluded }
+}
+# 按流算，几 GB 的文件也不整个读进内存
+function Get-AcaFileHash($path) {
+  $s = [IO.File]::OpenRead($path)
+  try { Get-AcaHash $s } finally { $s.Close() }
+}
 # 备份的是被覆盖的旧文件，盘上要放得下它们再加上新包
 function Assert-AcaDiskSpace($root, $files, $rels, $added) {
   $need = ($files | Measure-Object Length -Sum).Sum

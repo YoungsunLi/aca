@@ -8,8 +8,8 @@ $label = if ($web) { 'home' } else { 'service' }
 $lock = Lock-Aca $root
 try {
   $steps = @(Get-AcaBackups $root | Select-Object -Last $deploys.Count | ForEach-Object {
-    $lines = @(Get-Content -LiteralPath (Join-Path $_.FullName 'aca-manifest.txt'))
-    New-Object psobject -Property @{ Backup = $_.FullName; Id = $lines[0]; Added = @($lines | Select-Object -Skip 1) }
+    $m = Read-AcaManifest $_.FullName
+    New-Object psobject -Property @{ Backup = $_.FullName; Id = $m.Id; Added = $m.Added }
   })
   [array]::Reverse($steps)
   # 计划和执行之间可能又发布过一次，那样该先退的是更新的那份备份

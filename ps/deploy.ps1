@@ -22,7 +22,8 @@ try {
   # 先加锁：后面算的"新增文件"和备份清单都依赖目标目录此刻的样子，中途被别的发布改了就错了
   $lock = Lock-Aca $root
   if (-not (Test-Path -LiteralPath $new)) { throw "The package unpacked by the pre-check is gone ($new); deploy again" }
-  $files = @(Get-ChildItem -LiteralPath $new -Recurse -File | Where-Object { -not (Test-AcaExcluded $_.FullName.Substring($new.Length + 1) $exclude) })
+  $all = @(Get-ChildItem -LiteralPath $new -Recurse -File)
+  $files = @($all | Where-Object { -not (Test-AcaExcluded $_.FullName.Substring($new.Length + 1) $exclude) })
   $rels = @($files | ForEach-Object { $_.FullName.Substring($new.Length + 1) })
   $added = @($rels | Where-Object { -not (Test-Path -LiteralPath (Join-Path $root $_)) })
   # 预检查到现在，前面的服务器在发，这台可能又被占了磁盘，也可能被租约管不到的另一套 aca 或有人手工改了文件
@@ -33,6 +34,10 @@ try {
   foreach ($c in $configs) {
     if ((Get-AcaHash ([IO.File]::ReadAllBytes((Join-Path $root $c.Name)))) -ne (Get-Content -LiteralPath "$($c.FullName).base")) { throw "$($c.Name) on the server changed after the pre-check; deploy again" }
   }
+  # 包里被排除的文件记下哈希，下次预检查拿来比；这次包里没带的沿用上次记的
+  $last = @(Get-AcaBackups $root)[-1]
+  $hashes = if ($last) { (Read-AcaManifest $last.FullName).Excluded } else { @{} }
+  foreach ($f in @($all | Where-Object { Test-AcaExcluded $_.FullName.Substring($new.Length + 1) $exclude })) { $hashes[$f.FullName.Substring($new.Length + 1)] = Get-AcaFileHash $f.FullName }
   # 发布前的状态留着对照：发布后坏了才知道是这次包的问题还是本来就坏
   $before = Get-AcaHealth $web $name 1
   # 发布前就停着的服务，发布后也不启动：备机上的服务常常是刻意停着的
@@ -46,9 +51,9 @@ try {
       if ($added -notcontains $rel) { Copy-AcaFile (Join-Path $root $rel) (Join-Path $backup $rel) }
     }
     foreach ($c in $configs) { Copy-AcaFile (Join-Path $root $c.Name) (Join-Path $backup $c.Name) }
-    # 清单第一行是发布 ID，其余是本次新增的文件；备份集合按同一份 $added 算，回退时恢复和删除才不会打架。
+    # 清单的格式见 Read-AcaManifest；新增文件和备份集合按同一份 $added 算，回退时恢复和删除才不会打架。
     # 备份全部写完才写清单：没清单的目录不算备份，复制到一半的不会被拿去回退
-    Set-Content -LiteralPath $manifest -Value (@($deployId) + $added) -Encoding UTF8
+    Set-Content -LiteralPath $manifest -Value (@($deployId) + $added + @($hashes.Keys | Where-Object { Test-AcaExcluded $_ $exclude } | ForEach-Object { "$acaExcludedTag$($hashes[$_])\$_" })) -Encoding UTF8
     foreach ($f in $files) { Copy-AcaFile $f.FullName (Join-Path $root $f.FullName.Substring($new.Length + 1)) }
     foreach ($c in $configs) { Copy-AcaFile $c.FullName (Join-Path $root $c.Name) }
   } catch {

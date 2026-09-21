@@ -27,6 +27,6 @@ function Test-AcaEnvConfig($web, $rel) { if ($web) { $rel -eq 'web.config' } els
 $acaRoots = "(/* | /*/*[local-name()='location'][not(@path) or @path='' or @path='.'])"
 # ASP.NET Core 的站点：web.config 是发布时生成的，在根路径上配了 aspNetCore
 function Get-AcaCoreHandler($x) { $x.SelectSingleNode("$acaRoots/*[local-name()='system.webServer']/*[local-name()='aspNetCore']") }
-function Get-AcaHash($bytes) { [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($bytes)) -replace '-' }
+function Get-AcaHash($data) { [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($data)) -replace '-' }
 # 服务名里的 [ ] 会被 -Name 当通配符，Worker[1] 会取到 Worker1
 function Get-AcaService($name) { Get-Service -Name ([Management.Automation.WildcardPattern]::Escape($name)) }

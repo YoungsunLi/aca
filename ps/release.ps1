@@ -6,7 +6,7 @@ function Remove-AcaOldBackups($root, $backup, $keep) {
     $b = $baks[$i]
     try {
       # 回退计划靠它分辨某台服务器缺的备份是被清理了，还是这台服务器没参与那次发布；只追加，写的时候被杀也丢不了之前的记录
-      Add-Content -LiteralPath "$root.aca-pruned" -Value @(Get-Content -LiteralPath (Join-Path $b.FullName 'aca-manifest.txt'))[0]
+      Add-Content -LiteralPath "$root.aca-pruned" -Value (Read-AcaManifest $b.FullName).Id
       Move-AcaBackupToTrash $b.FullName
       "Removed old backup $($b.FullName)"
     } catch {
