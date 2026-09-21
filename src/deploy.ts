@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { ZipArchive } from 'archiver';
 import { clbOf, outOfClb } from './clb.ts';
 import { type Config, getSite, getTarget, targetVars } from './config.ts';
-import { Ecs, type RunResult } from './ecs.ts';
+import { Ecs, inParallel, type RunResult } from './ecs.ts';
 import { targetLease } from './lease.ts';
 import { exists, signForEcs, upload } from './oss.ts';
 import { renderScript } from './ps.ts';
@@ -47,16 +47,19 @@ export async function* deploy(cfg: Config, name: string, path: string | undefine
     if (fromStage && !await exists(cfg, object)) throw new Error(`Package ${pkg.id} is no longer on OSS, most likely removed by the bucket's lifecycle rule; deploy the same build from a local path instead`);
 
     const timeout = 1800;
+    const vars = { ...targetVars(name, target), WORK: `aca-${deployId}-${randomBytes(4).toString('hex')}`, DEPLOY_ID: deployId, SHA256: pkg.sha256, EXCLUDE: exclude.join('\n'), FORCE: String(force) };
+    // 先查完每台服务器再动手：发到一半才发现后面的服务器过不了预检查，负载均衡后面就是新旧两个版本
+    const checkScript = renderScript('check', { ...vars, URL: await signForEcs(cfg, object, timeout), CHECK_ONLY: String(check) }, ['target']);
+    const checks = await inParallel(cfg, instances, async (instance): Promise<[string, RunResult]> => [instance, await ecs.runPowerShell(instance, checkScript, timeout)]);
+    yield* checks;
+    if (check) return;
+    const failed = checks.filter(([, r]) => r.status !== 'Success').map(([instance]) => instance);
+    if (failed.length) throw new Error(`Pre-check failed on ${failed.join(', ')}; no server was deployed`);
+    const script = renderScript('deploy', { ...vars, PACKAGE: pkg.id, MESSAGE: message, KEEP: String(keep) }, ['target']);
     for (const [i, instance] of instances.entries()) {
       held?.check();
-      // 每台服务器现签一个链接，有效期同这台的运行时限：STS 类凭证签出的链接随 token 失效，整批共用一个，排在后面的服务器会下载失败。
-      // 签在摘出负载均衡之前，签名出错时这台服务器还没被摘
-      const script = renderScript('deploy', {
-        ...targetVars(name, target), URL: await signForEcs(cfg, object, timeout), SHA256: pkg.sha256, DEPLOY_ID: deployId, PACKAGE: pkg.id, MESSAGE: message,
-        CHECK_ONLY: String(check), FORCE: String(force), EXCLUDE: exclude.join('\n'), KEEP: String(keep),
-      }, ['target']);
-      const r = yield* outOfClb(check ? undefined : clb, held, instance, () => ecs.runPowerShell(instance, script, timeout));
-      if (r.status !== 'Success') throw new Error(`${instance}: ${check ? 'pre-check' : 'deploy'} failed, ${instances.length - i - 1} remaining server(s) not processed`);
+      const r = yield* outOfClb(clb, held, instance, () => ecs.runPowerShell(instance, script, timeout));
+      if (r.status !== 'Success') throw new Error(`${instance}: deploy failed, ${instances.length - i - 1} remaining server(s) not processed`);
     }
   } finally {
     await held?.release();

@@ -70,8 +70,8 @@ program.command('logs <site>').description('Print the IIS log of a site from eac
     }
   });
 
-program.command('deploy <target> [path]').description('Deploy a directory or zip to a configured IIS site or Windows service, one server at a time; path defaults to its publish directory')
-  .option('-c, --check', 'upload and pre-check only: list the files to overwrite and add, without stopping the site or service')
+program.command('deploy <target> [path]').description('Deploy a directory or zip to a configured IIS site or Windows service: pre-check every server, then deploy one server at a time; path defaults to its publish directory')
+  .option('-c, --check', 'upload and pre-check every server only: list the files to overwrite and add, without stopping the site or service')
   .option('-m, --message <text>', 'note for the deploy log on the server, e.g. the commit range or branch')
   .option('-f, --force', 'deploy even if the package has files older than those on the server')
   .option('--skip-stage', 'do not require the package to be the latest deploy on the stage site')

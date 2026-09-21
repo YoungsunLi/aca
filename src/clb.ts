@@ -198,7 +198,7 @@ export async function* outOfClb(clb: Clb | undefined, held: Lease | undefined, n
     throw e;
   });
   yield [name, r];
-  // 脚本在停站之前报错退出的（预检查没过等）放回去，Stop-AcaSite 停站前先打印 Stopping site。锁被占时不放回：
+  // 脚本在停站之前报错退出的（磁盘不够等）放回去，Stop-AcaTarget 停站前先打印 Stopping site。锁被占时不放回：
   // 占着锁的 aca 可能也摘了这台、正停着站。超时被杀等别的状态和输出被截断的，看不准停没停过，当停过
   const untouched = r.status === 'Failed' && !r.dropped && !/^Stopping site |Another aca operation is modifying this site/m.test(r.output);
   if (r.status === 'Success' || untouched) await out?.putBack();

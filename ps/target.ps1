@@ -61,6 +61,21 @@ function Clear-AcaTrash($root) {
     } catch { "WARN: $d not fully deleted, will retry on the next deploy or rollback: $($_.Exception.Message)" }
   }
 }
+# 备份的是被覆盖的旧文件，盘上要放得下它们再加上新包
+function Assert-AcaDiskSpace($root, $files, $rels, $added) {
+  $need = ($files | Measure-Object Length -Sum).Sum
+  for ($i = 0; $i -lt $files.Count; $i++) {
+    if ($added -notcontains $rels[$i]) { $need += (Get-Item -LiteralPath (Join-Path $root $rels[$i])).Length }
+  }
+  $free = (Get-PSDrive $root.Substring(0, 1)).Free
+  if ($free -lt $need) { throw "Only $([int]($free / 1MB))MB free on drive $($root.Substring(0, 1)), not enough for backup plus overwrite (about $([int]($need / 1MB))MB needed)" }
+}
+# 包比服务器旧：要么拿错了旧构建，要么服务器上有人手改过，两种都不该悄悄覆盖
+function Get-AcaOlderFiles($root, $files, $rels, $added) {
+  for ($i = 0; $i -lt $files.Count; $i++) {
+    if ($added -notcontains $rels[$i] -and (Get-Item -LiteralPath (Join-Path $root $rels[$i])).LastWriteTime -gt $files[$i].LastWriteTime.AddMinutes(1)) { $rels[$i] }
+  }
+}
 function Copy-AcaFile($src, $dst) {
   New-Item -ItemType Directory -Path (Split-Path $dst) -Force | Out-Null
   Copy-Item -LiteralPath $src -Destination $dst -Force
