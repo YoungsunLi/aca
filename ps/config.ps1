@@ -170,6 +170,8 @@ function Invoke-AcaSync($state, $what, $step) {
   $state.Lines += $r.Lines
 }
 function Sync-AcaConfig($srv, $pkg) {
+  # 包里那份写坏了就整份不合，不然每一步都报一遍同样的错
+  [void](Read-AcaXml $pkg)
   $state = @{ Text = $srv; Lines = @() }
   foreach ($c in $acaCollections) { Invoke-AcaSync $state $c.Label { param($t) Sync-AcaCollection $t $pkg $c } }
   Invoke-AcaSync $state 'startup' { param($t) Sync-AcaElement $t $pkg 'configuration/startup' }
@@ -177,6 +179,44 @@ function Sync-AcaConfig($srv, $pkg) {
   # 写坏了的配置运行时会整个忽略，改完先确认还能解析
   [void](Read-AcaXml $state.Text)
   $state
+}
+
+# 节按完整路径比，system.web 这类节组要拆到组里的节。组由 configSections 声明，内置的在 machine.config、applicationHost.config 里
+function Get-AcaGroups($x) {
+  foreach ($g in @($x.SelectNodes("/*/*[local-name()='configSections']//*[local-name()='sectionGroup']"))) {
+    $path = $g.GetAttribute('name')
+    for ($n = $g.ParentNode; $n.LocalName -eq 'sectionGroup'; $n = $n.ParentNode) { $path = $n.GetAttribute('name') + '/' + $path }
+    $path
+  }
+}
+function Get-AcaSections($e, $prefix, $groups) {
+  foreach ($c in @($e.ChildNodes | Where-Object { $_.NodeType -eq 'Element' -and $_.LocalName -notmatch '^(configSections|location)$' })) {
+    $path = $prefix + $c.LocalName
+    if ($groups -contains $path) { Get-AcaSections $c "$path/" $groups } else { $path }
+  }
+}
+
+# 包里那份有、服务器上那份没有的配置节、appSettings 键、连接串：值要按环境填，aca 不照搬，只列名字
+function Get-AcaMissing($srv, $pkg) {
+  $s = Read-AcaXml $srv
+  $p = Read-AcaXml $pkg
+  $builtIn = @((Join-Path ([Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirectory()) 'Config\machine.config'), "$env:windir\System32\inetsrv\config\applicationHost.config" | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { $x = New-Object xml; $x.Load($_); $x })
+  $groups = @(@($s, $p) + $builtIn | ForEach-Object { Get-AcaGroups $_ })
+  # 按 local-name 找：ASP.NET 2.0 的工具给 configuration 加过默认命名空间，老站点的 web.config 还带着。
+  # 只比根路径上生效的：直接写在 configuration 下的，和包在 path 为空或 "." 的 location 里的
+  $roots = "(/* | /*/*[local-name()='location'][not(@path) or @path='' or @path='.'])"
+  $names = { param($x, $q) if ($q.Section) { $x.SelectNodes("$roots/*[local-name()='$($q.Section)']/*[local-name()='add']/@$($q.Key)") | ForEach-Object Value } else { $x.SelectNodes($roots) | ForEach-Object { Get-AcaSections $_ '' $groups } } }
+  foreach ($q in @(
+    @{ Label = 'sections' }
+    # 服务器上那份把这一节放在别的文件里时看不到有哪些条目，不比
+    @{ Label = 'appSettings keys'; Section = 'appSettings'; Key = 'key'; Elsewhere = '@configSource or @file' }
+    @{ Label = 'connection strings'; Section = 'connectionStrings'; Key = 'name'; Elsewhere = '@configSource' }
+  )) {
+    if ($q.Elsewhere -and $s.SelectSingleNode("$roots/*[local-name()='$($q.Section)'][$($q.Elsewhere)]")) { continue }
+    $have = @(& $names $s $q)
+    $miss = @(& $names $p $q | Where-Object { $have -notcontains $_ } | Select-Object -Unique)
+    if ($miss) { "$($q.Label) $($miss -join ', ')" }
+  }
 }
 
 # 只处理 UTF-8：按原来有没有 BOM 写回；解码再编码能逐字节还原才动它，改动之外的字节就原样不变

@@ -39,6 +39,9 @@ try {
   # 全量构建的包会带上 exclude 里的文件，不能覆盖
   $files = @($all | Where-Object { -not (Test-AcaExcluded $_.FullName.Substring($new.Length + 1) $exclude) })
   if ($files.Count -lt $all.Count) { "Excluded $($all.Count - $files.Count) files ($($exclude -join ', '))" }
+  # 构建新加在 exclude 路径下的文件不会发出去，服务器上就一直没有；服务器上没有环境配置由 analyze 提示
+  $hidden = @($all | ForEach-Object { $_.FullName.Substring($new.Length + 1) } | Where-Object { (Test-AcaExcluded $_ $exclude) -and -not (Test-AcaEnvConfig $web $_) -and -not (Test-Path -LiteralPath (Join-Path $root $_)) })
+  if ($hidden) { "NOTE: new files under excluded paths are not deployed: $(($hidden | Select-Object -First 20) -join ', ')" }
   if (-not $files) { throw 'Package is empty' }
   $rels = @($files | ForEach-Object { $_.FullName.Substring($new.Length + 1) })
   $src = @($rels | Where-Object { $_ -match '^(\.git|\.vs|obj|node_modules)\\|\.(csproj|sln|cs)$' })
