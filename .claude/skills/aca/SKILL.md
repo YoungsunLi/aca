@@ -107,6 +107,7 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
    配了 `stage` 的正式站要求包先在预发布站发过且是那边最后一次成功发布，发这种站用 `--from-stage`（`--check` 时也加上），发的就是预发布站验证过的那个包；
    报错让先发预发布站（`deploy to the stage site`）时告诉用户要先发预发布站并验证，不要用 `--skip-stage` 绕过，除非用户明确要求；
    `--from-stage` 报 `no longer on OSS` 时包已被 OSS 生命周期规则清理，改用本地路径发同一份构建。
+   报错里有 `without credentials` 时停下来告诉用户，不要自己改 bucket 的权限或防盗链：里面可能有别的文件要公开。
 4. 输出先是每台服务器的预检查，再是逐台的发布，每段以 `== <实例别名>` 开头；发布那段最后一行 `OK: <站点或服务> -> <目录>  home <状态码> (before: <状态码>)  (backup: <path>)` 即这台服务器发布成功，
    服务的那段是 `service <状态> (before: <状态>)`。
    配了 `clb` 的站点，每台服务器前后还各有一行 `CLB <id>: <实例> weight <原值> -> 0`、`CLB <id>: <实例> weight 0 -> <原值>`，是 aca 把它摘出、放回负载均衡。

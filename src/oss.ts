@@ -36,6 +36,37 @@ export async function exists(cfg: Config, objectName: string): Promise<boolean> 
   }
 }
 
+/**
+ * 试出来的是 ACL 和阻止公共访问叠加后的实际结果，比读 ACL 配置准。
+ * 对象不存在时，过了权限这一关才轮得到 404
+ */
+export async function readableWithoutCredentials(cfg: Config, objectName: string): Promise<boolean> {
+  const url = new OSS(await options(cfg)).generateObjectUrl(objectName);
+  // 只取 1 个字节：试的可能是已经存在的包
+  const res = await fetch(url, { headers: { Range: 'bytes=0-0' } })
+    // fetch 连不上时只报一句 fetch failed，原因在 cause 里
+    .catch((e: Error) => { throw new Error(`Reading ${url} without credentials failed: ${(e.cause as Error | undefined)?.message ?? e.message}`, { cause: e }); });
+  const body = await res.text();
+  const ec = res.headers.get('x-oss-ec');
+  // 只认 bucket ACL（含阻止公共访问）和文件 ACL 的拒绝：被 bucket policy、防盗链挡下的，换个 Referer、User-Agent 可能就读得到
+  if (ec === '0003-00000001' || ec === '0003-00000005') return false;
+  if (res.ok || (res.status === 404 && !body.includes('<Code>NoSuchBucket</Code>'))) return true;
+  throw new Error(`Reading ${url} without credentials got HTTP ${res.status}: ${/<Message>(.*?)<\/Message>/.exec(body)?.[1] ?? res.statusText}`);
+}
+
+/** SDK 没有 GetBucketPolicyStatus，借它的签名发请求 */
+export async function policyIsPublic(cfg: Config): Promise<boolean> {
+  const client = new OSS(await options(cfg)) as unknown as {
+    _bucketRequestParams(method: string, bucket: string, subres: string): { successStatuses?: number[] };
+    request(params: object): Promise<{ res: { data: Buffer } }>;
+  };
+  const params = client._bucketRequestParams('GET', cfg.oss.bucket, 'policyStatus');
+  // 不设的话 SDK 把 403 也当成功返回，没权限就被当成了不公开
+  params.successStatuses = [200];
+  const { res } = await client.request(params).catch((e: Error) => { throw new Error(`Could not read the policy status of bucket ${cfg.oss.bucket} (aca needs oss:GetBucketPolicyStatus): ${e.message}`, { cause: e }); });
+  return /<IsPublic>true<\/IsPublic>/.test(res.data.toString());
+}
+
 export async function remove(cfg: Config, objectName: string, versionId: string | undefined) {
   // SDK 支持 versionId，类型声明里没写
   await new OSS(await options(cfg)).delete(objectName, { versionId } as OSS.RequestOptions);

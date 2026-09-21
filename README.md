@@ -78,7 +78,7 @@ aca skill install  # 给 Claude Code、Codex 装上 skill，升级 aca 后再跑
 
 凭证按阿里云 SDK 的[默认凭证链](https://help.aliyun.com/zh/sdk/developer-reference/v2-manage-node-js-access-credentials)查找，和阿里云 CLI 共用：`aliyun configure` 配过就不用再配，也可以设环境变量 `ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET`，两处都配了时环境变量优先。
 
-**RAM 权限**：`ecs:DescribeInstances`、`ecs:RunCommand`、`ecs:DescribeInvocationResults`、`oss:PutObject`、`oss:GetObject`、`oss:ListObjects`、`oss:DeleteObject`（bucket 开了版本控制时，`pull`、`logs`、`diff` 和 `certs replace` 删 OSS 上中转的文件要 `oss:DeleteObjectVersion`），站点配了 `clb` 还要 `slb:DescribeLoadBalancerAttribute`、`slb:DescribeLoadBalancerListeners`、`slb:DescribeHealthStatus`、`slb:SetBackendServers`，取云端证书要 `yundun-cert:ListUserCertificateOrder`、`yundun-cert:GetUserCertificateDetail`（数字证书管理服务只支持操作级授权，资源只能写 `*`）。
+**RAM 权限**：`ecs:DescribeInstances`、`ecs:RunCommand`、`ecs:DescribeInvocationResults`、`oss:PutObject`、`oss:GetObject`、`oss:ListObjects`、`oss:GetBucketPolicyStatus`、`oss:DeleteObject`（bucket 开了版本控制时，`pull`、`logs`、`diff` 和 `certs replace` 删 OSS 上中转的文件要 `oss:DeleteObjectVersion`），站点配了 `clb` 还要 `slb:DescribeLoadBalancerAttribute`、`slb:DescribeLoadBalancerListeners`、`slb:DescribeHealthStatus`、`slb:SetBackendServers`，取云端证书要 `yundun-cert:ListUserCertificateOrder`、`yundun-cert:GetUserCertificateDetail`（数字证书管理服务只支持操作级授权，资源只能写 `*`）。
 
 > [!WARNING]
 > 云助手以 SYSTEM 身份执行脚本，`ecs:RunCommand` 授权到哪些实例，持有这份 AccessKey 的人和 Agent 就是哪些实例的管理员，按实例 ID 授权，不要给 `*`。
@@ -93,6 +93,7 @@ aca skill install  # 给 Claude Code、Codex 装上 skill，升级 aca 后再跑
 - **发布完成后站点和应用池会被启动**，即使发布前是手动停掉的；服务相反，发布前就停着的发布后也不启动：备机上的服务常常是刻意停着的。
 - **本机和服务器要在同一时区**：包里的文件时间按本地时间存，"比服务器旧"的判断靠它。
 - **发布包（`--check` 也会上传）按 SHA-256 命名留在 OSS 的 `<prefix>` 下**，aca 不删，要在 bucket 上配生命周期规则按天清理，天数要长于从发预发布站到用 `--from-stage` 发正式站的间隔。
+- **bucket 要私有，防盗链要允许空 Referer**：发布包不加密，每次 `deploy`（含 `--check`）aca 先确认不带凭证读不到 `<prefix>` 下的包、bucket policy 也没有对匿名用户开放，否则报错退出。policy 里只对某些 Referer、User-Agent 放行匿名的也算开放，只限定来源 IP、VPC 或 AccessKey 的不算。服务器下载包时不带 Referer。
 
 ## 命令
 

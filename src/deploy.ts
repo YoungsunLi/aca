@@ -9,7 +9,7 @@ import { clbOf, outOfClb } from './clb.ts';
 import { type Config, getSite, getTarget, targetVars } from './config.ts';
 import { Ecs, inParallel, type RunResult } from './ecs.ts';
 import { targetLease } from './lease.ts';
-import { exists, signForEcs, upload } from './oss.ts';
+import { exists, policyIsPublic, readableWithoutCredentials, signForEcs, upload } from './oss.ts';
 import { renderScript } from './ps.ts';
 
 export type DeployOptions = { check?: boolean; message?: string; force?: boolean; skipStage?: boolean; fromStage?: boolean };
@@ -25,6 +25,14 @@ export async function* deploy(cfg: Config, name: string, path: string | undefine
   const target = getTarget(cfg, name);
   const { instances, publish, exclude = [], keep = 5, overwriteConfig = false } = target;
   const stage = target.kind === 'site' ? target.stage : undefined;
+  // 包不加密，里面有程序和随包发的配置
+  if (await readableWithoutCredentials(cfg, objectOf(cfg, randomBytes(32).toString('hex')))) {
+    throw new Error(`Deploy packages in oss://${cfg.oss.bucket}/${cfg.oss.prefix ?? ''} can be read without credentials; point oss.bucket at a private bucket, or make this bucket private if nothing in it needs to be public`);
+  }
+  // policy 只对某些 Referer、User-Agent 放行匿名时，试读不满足条件，试不出来
+  if (await policyIsPublic(cfg)) {
+    throw new Error(`The policy of bucket ${cfg.oss.bucket} allows reading without credentials; point oss.bucket at a private bucket, or remove the statements that allow anonymous access`);
+  }
   // 预检查不改服务器上的任何东西
   const held = check ? undefined : await targetLease(cfg, name, `deploy ${name}`);
   try {
@@ -45,6 +53,8 @@ export async function* deploy(cfg: Config, name: string, path: string | undefine
     }
     const object = objectOf(cfg, pkg.sha256);
     if (fromStage && !await exists(cfg, object)) throw new Error(`Package ${pkg.id} is no longer on OSS, most likely removed by the bucket's lifecycle rule; deploy the same build from a local path instead`);
+    // 上传的包跟着 bucket 的 ACL 走，复用的包可能被人单独设成了公共读
+    if (fromStage && await readableWithoutCredentials(cfg, object)) throw new Error(`Package ${pkg.id} (oss://${cfg.oss.bucket}/${object}) can be read without credentials; make it private first`);
 
     const timeout = 1800;
     const vars = { ...targetVars(name, target), WORK: `aca-${deployId}-${randomBytes(4).toString('hex')}`, DEPLOY_ID: deployId, SHA256: pkg.sha256, EXCLUDE: exclude.join('\n'), FORCE: String(force) };
