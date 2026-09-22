@@ -17,6 +17,10 @@ const TERMINAL_STATUS = new Set(['Success', 'Failed', 'Error', 'Timeout', 'Cance
 const PS_PREAMBLE = `[Console]::OutputEncoding = [Text.Encoding]::Default
 trap { 'ERROR: ' + $_.Exception.Message; exit 1 }
 `;
+// 云助手执行记录里只有渲染后的脚本，名称写上 aca 命令行才认得出是哪条命令。
+// 名称限 128 字符；有 emoji 这类 BMP 以外的字符时整条 RunCommand 被拒，先剔掉
+const COMMAND_NAME = ['aca', ...process.argv.slice(2).map((a) => (/\s/.test(a) ? `"${a}"` : a))]
+  .join(' ').replace(/[\uD800-\uDFFF]/g, '').replace(/\s+/g, ' ').slice(0, 128);
 
 /** 只读、互不影响的操作几台服务器同时跑，一台台来的话时间要相加 */
 export async function inParallel<T>(cfg: Config, instances: string[], run: (instance: string) => Promise<T>): Promise<T[]> {
@@ -86,6 +90,7 @@ export class Ecs {
     const client = new $Ecs.default(new $OpenApi.Config({ accessKeyId, accessKeySecret, securityToken, endpoint: `ecs.${this.#region}.aliyuncs.com` }));
     const { body } = await client.runCommand(new $Ecs.RunCommandRequest({
       regionId: this.#region,
+      name: COMMAND_NAME,
       type: 'RunPowerShellScript',
       contentEncoding: 'Base64',
       commandContent: Buffer.from(PS_PREAMBLE + script).toString('base64'),
