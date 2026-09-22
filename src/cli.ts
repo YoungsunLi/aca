@@ -9,7 +9,8 @@ import { isWeight, siteClb } from './clb.ts';
 import { getSite, getTarget, loadConfig, relativePath, targetVars } from './config.ts';
 import { deploy, type DeployOptions } from './deploy.ts';
 import { diff, printDiff } from './diff.ts';
-import { Ecs, type RunResult } from './ecs.ts';
+import { discover, printDiscovery } from './discover.ts';
+import { type Assistant, Ecs, type RunResult } from './ecs.ts';
 import { targetLease } from './lease.ts';
 import { type LogOptions, readLogs } from './logs.ts';
 import { overview } from './overview.ts';
@@ -20,11 +21,25 @@ import { planRollback, printPlan, rollback } from './rollback.ts';
 const program = new Command('aca').description('Run PowerShell on Windows ECS instances and deploy or roll back IIS sites and Windows services through Alibaba Cloud Cloud Assistant')
   .version(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);
 
-program.command('instances').description('List ECS instances in the configured region').action(async () => {
-  const list = await new Ecs(loadConfig()).listInstances();
-  console.log(['InstanceId', 'Status', 'PublicIp', 'PrivateIp', 'Name', 'OS'].join('\t'));
-  for (const i of list) console.log([i.id, i.status, i.publicIp || '-', i.privateIp || '-', i.name, i.os].join('\t'));
+program.command('instances').description('List ECS instances in the configured region, with the version of the Cloud Assistant client on each, or when it went offline').action(async () => {
+  const ecs = new Ecs(loadConfig());
+  const list = await ecs.listInstances();
+  // 这一列另要 ecs:DescribeCloudAssistantStatus，AccessKey 没给它时照样列出实例
+  const assistant = await ecs.assistantStatus().catch((e: Error) => {
+    console.error(`WARN: could not read the Cloud Assistant status, which needs ecs:DescribeCloudAssistantStatus: ${e.message.split('\n')[0]}`);
+    return new Map<string, Assistant>();
+  });
+  console.log(['InstanceId', 'Status', 'PublicIp', 'PrivateIp', 'Name', 'OS', 'CloudAssistant'].join('\t'));
+  for (const i of list) {
+    const a = assistant.get(i.id);
+    console.log([i.id, i.status, i.publicIp || '-', i.privateIp || '-', i.name, i.os, a ? (a.online ? a.version : `offline since ${a.heartbeat || '?'}`) : '-'].join('\t'));
+  }
 });
+
+program.command('discover [instances...]').description('List the IIS sites, and the Windows services installed outside the Windows, Program Files and ProgramData directories, on servers (instance IDs or aliases from the config; every running Windows instance in the region by default), with a draft of config entries for the running sites and enabled services not configured yet')
+  .action(async (names: string[]) => {
+    if (!printDiscovery(await discover(loadConfig(), names))) process.exitCode = 1;
+  });
 
 program.command('sites').description('List configured sites with their project, publish directory on this machine and instances').action(() => {
   const { sites } = loadConfig();

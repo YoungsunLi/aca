@@ -4,7 +4,9 @@ import $OpenApi from '@alicloud/openapi-client';
 import { type Config, instanceId } from './config.ts';
 import type { Lease } from './lease.ts';
 
-export type Instance = { id: string; name: string; status: string; os: string; publicIp: string; privateIp: string };
+/** osType 是 windows 或 linux */
+export type Instance = { id: string; name: string; status: string; os: string; osType: string; publicIp: string; privateIp: string };
+export type Assistant = { online: boolean; version: string; heartbeat: string };
 /** dropped：输出超过云助手上限被丢掉的字节数 */
 export type RunResult = { status: string; exitCode: number | undefined; output: string; error: string; dropped: number };
 
@@ -49,9 +51,24 @@ export class Ecs {
           name: i.instanceName ?? '',
           status: i.status ?? '',
           os: i.OSName ?? '',
+          osType: i.OSType ?? '',
           publicIp: i.eipAddress?.ipAddress || i.publicIpAddress?.ipAddress?.[0] || '',
           privateIp: i.vpcAttributes?.privateIpAddress?.ipAddress?.[0] ?? '',
         });
+      }
+      nextToken = body?.nextToken || undefined;
+    } while (nextToken);
+    return result;
+  }
+
+  /** 当前地域每台服务器上云助手客户端的状态，按实例 ID */
+  async assistantStatus(): Promise<Map<string, Assistant>> {
+    const result = new Map<string, Assistant>();
+    let nextToken: string | undefined;
+    do {
+      const { body } = await this.#client.describeCloudAssistantStatus(new $Ecs.DescribeCloudAssistantStatusRequest({ regionId: this.#region, maxResults: 50, nextToken }));
+      for (const s of body?.instanceCloudAssistantStatusSet?.instanceCloudAssistantStatus ?? []) {
+        result.set(s.instanceId ?? '', { online: s.cloudAssistantStatus === 'true', version: s.cloudAssistantVersion ?? '', heartbeat: s.lastHeartbeatTime ?? '' });
       }
       nextToken = body?.nextToken || undefined;
     } while (nextToken);

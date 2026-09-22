@@ -1,6 +1,6 @@
 ---
 name: aca
-description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发布到 IIS、把程序发布到 Windows 服务。当用户要求列出服务器、在服务器上执行 PowerShell、看服务器上的日志或拉取文件、查当前版本、比对几台服务器上的文件、查或换 SSL 证书、或发布/回退 IIS 站点和 Windows 服务时使用。
+description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发布到 IIS、把程序发布到 Windows 服务。当用户要求列出服务器、盘点服务器上的站点和服务、在服务器上执行 PowerShell、看服务器上的日志或拉取文件、查当前版本、比对几台服务器上的文件、查或换 SSL 证书、或发布/回退 IIS 站点和 Windows 服务时使用。
 ---
 
 # aca：阿里云 ECS / IIS 与 Windows 服务发布
@@ -11,7 +11,7 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
 
 云助手以 SYSTEM 身份执行，用 `aca run` 就等于拿到生产机的管理员 shell，其它命令也都跑在这个权限上。
 
-- 不改站点和服务的直接做：`instances`、`sites`、`services`、`status`、`logs`、`diff`、`certs`、`certs cloud`、`clb`、`pull`、各命令的 `--check`，以及 `aca run` 里只查询不改动的脚本。
+- 不改站点和服务的直接做：`instances`、`discover`、`sites`、`services`、`status`、`logs`、`diff`、`certs`、`certs cloud`、`clb`、`pull`、各命令的 `--check`，以及 `aca run` 里只查询不改动的脚本。
 - 会改服务器的只在用户本轮明确要求时做：`deploy`、`rollback` 按下面的发布流程确认；
   `clb restore` 会让负载均衡重新把请求转给这台服务器，先确认它上面的站点正常，用户同意后再放回；
   `certs replace` 先 `--check`，把每台服务器要换的条目和条目上的站点给用户看，确认后再换；
@@ -26,7 +26,10 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
 
 列表类输出第一行是表头，之后每行 tab 分隔。
 
-- `aca instances` — 列出当前地域的实例：实例 ID、状态、公网 IP、内网 IP、名称、系统
+- `aca instances` — 列出当前地域的实例：实例 ID、状态、公网 IP、内网 IP、名称、系统、云助手客户端的版本。
+  这一列是 `offline since <最后心跳>` 的服务器上 aca 的命令都会失败，告诉用户去看那台服务器上的云助手客户端
+- `aca discover [实例ID或别名...]` — 列出服务器上的 IIS 站点和 Windows 服务（装在 Windows、Program Files、ProgramData 里的不列）：状态、目录、最新文件的时间，站点的应用池、位数、运行时和绑定，服务的启动方式和命令行；
+  最后是配置里还没有的、开着的站点和服务的配置草稿。不给服务器时盘点当前地域每台开着的 Windows 服务器
 - `aca sites` — 列出配置里的站点：站点名、项目名、本机的发布目录、实例、备注。
   用户说的通常是项目名或发布目录名，IIS 站点名往往和它不一样，要靠这张表对应；
   一个项目常对应多个站（正式、测试），发之前让用户确认是哪个
@@ -84,10 +87,9 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
 
 ## 发布流程
 
-1. 站点必须在配置文件的 `sites` 里登记、服务在 `services` 里登记，不在里面的不能发。要加新站点，先在每台服务器上核实它真的在跑
-   （`Get-Website` 的状态、应用池有无工作进程、最新文件日期），同名站点在别的服务器上可能是早已停用的副本；
-   加新服务同理，核实 `Get-Service` 的状态和 `Get-WmiObject Win32_Service` 里的可执行文件路径，`dir` 要填这个可执行文件所在的目录；
-   核实结果给用户确认后再写进配置，不要自作主张加。
+1. 站点必须在配置文件的 `sites` 里登记、服务在 `services` 里登记，不在里面的不能发。要加新站点或服务，先跑 `aca discover`，
+   看它在每台服务器上的状态、目录和最新文件；同名站点在别的服务器上可能是早已停用的副本，
+   有 `NOTE: ... is more than a day older than on ...` 的服务器先问用户那边还用不用。草稿给用户确认后再写进配置，不要自作主张加。
 2. 先跑 `--check`，把结果给用户看：覆盖/新增数量，尤其是 `New DLLs` 一行。目标目录里原本没有的 DLL
    要么是新加的依赖，要么是发错了目标，必须让用户确认后才能真正发布。
    有 `Source maps in package` 一行时，告诉用户发上去别人可能看到前端源码，而且发布从不删除服务器上的文件，

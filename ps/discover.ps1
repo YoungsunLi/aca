@@ -1,0 +1,34 @@
+# 每行一个站点或服务，tab 分隔：种类、名字、状态、目录、最新文件的时间、说明、能不能写进配置草稿
+function Out-AcaRow { ($args | ForEach-Object { "$_" -replace '\s', ' ' }) -join "`t" }
+function Format-AcaNewest($web, $root) {
+  $f = Get-AcaNewestFile $web $root
+  if ($f) { $f.LastWriteTime.ToString('yyyy-MM-dd HH:mm') }
+}
+# 没装 IIS 的服务器（如数据库服务器）上只有服务
+if (Get-Command Get-Website -ErrorAction SilentlyContinue) {
+  foreach ($web in @(Get-Website)) {
+    try {
+      $root = Get-AcaRoot $web
+      $pool = Get-Item -LiteralPath "IIS:\AppPools\$($web.applicationPool)"
+      $state = if ($web.State -ne 'Started') { $web.State } elseif ($pool.state -ne 'Started') { "Started, app pool $($pool.state)" } else { 'Started' }
+      $runtime = if ($pool.managedRuntimeVersion) { $pool.managedRuntimeVersion } else { 'no managed code' }
+      $bindings = @($web.bindings.Collection | ForEach-Object { "$($_.protocol)/$($_.bindingInformation)" })
+      # 绑定多的站点一行能有上千字符，几十个站点就会撑破云助手的输出上限
+      $more = if ($bindings.Count -gt 3) { " (+$($bindings.Count - 3) more)" }
+      Out-AcaRow site $web.name $state $root (Format-AcaNewest $web $root) "app pool $($pool.name), $(if ($pool.enable32BitAppOnWin64) { 32 } else { 64 })-bit, $runtime; $(($bindings | Select-Object -First 3) -join ' ')$more" ($state -eq 'Started')
+    } catch { Out-AcaRow site $web.name "ERROR: $($_.Exception.Message)" }
+  }
+}
+# 系统、Program Files、ProgramData 里的是 Windows 自己的和装上的软件（云助手客户端、杀毒、数据库），不是自己发布的程序，不列
+$system = @($env:windir, $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData | Where-Object { $_ })
+foreach ($svc in @(Get-WmiObject Win32_Service | Where-Object { $_.PathName })) {
+  # 带引号的 PathName 引号里是可执行文件；不带引号时路径照样能有空格，取到第一个 .exe 为止。有的安装程序写的是正斜杠
+  $exe = $(if ($svc.PathName.StartsWith('"')) { $svc.PathName.Split('"')[1] } else { $svc.PathName -replace '(?i)(\.exe).*$', '$1' }) -replace '/', '\'
+  if (@($system | Where-Object { $exe.StartsWith($_ + '\', 'OrdinalIgnoreCase') })) { continue }
+  try {
+    $dir = Split-Path $exe
+    # 盘符根 aca 不认，也别去整盘找最新文件
+    $mine = $svc.StartMode -ne 'Disabled' -and $dir -match '^[a-zA-Z]:\\[^\\]'
+    Out-AcaRow service $svc.Name $svc.State $dir $(if ($mine) { Format-AcaNewest $null $dir }) "$($svc.StartMode) start; $($svc.PathName)" $mine
+  } catch { Out-AcaRow service $svc.Name "ERROR: $($_.Exception.Message)" }
+}

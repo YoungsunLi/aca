@@ -78,7 +78,7 @@ The keys of `services` are Windows service names (the ones `sc query` lists, not
 
 Credentials are resolved by the Alibaba Cloud SDK's [default credential chain](https://www.alibabacloud.com/help/en/sdk/developer-reference/v2-manage-node-js-access-credentials), shared with the Alibaba Cloud CLI: once you have run `aliyun configure` there is nothing more to set up; you can also set the environment variables `ALIBABA_CLOUD_ACCESS_KEY_ID` and `ALIBABA_CLOUD_ACCESS_KEY_SECRET`, which take precedence over `aliyun configure`.
 
-**RAM permissions**: `ecs:DescribeInstances`, `ecs:RunCommand`, `ecs:DescribeInvocationResults`, `oss:PutObject`, `oss:GetObject`, `oss:ListObjects`, `oss:GetBucketPolicyStatus`, `oss:DeleteObject` (on a versioned bucket, `pull`, `logs`, `diff` and `certs replace` need `oss:DeleteObjectVersion` to delete the files they pass through OSS), and `slb:DescribeLoadBalancerAttribute`, `slb:DescribeLoadBalancerListeners`, `slb:DescribeHealthStatus` and `slb:SetBackendServers` for sites with `clb`; taking a certificate from the cloud needs `yundun-cert:ListUserCertificateOrder` and `yundun-cert:GetUserCertificateDetail` (Certificate Management Service authorizes per operation, so the resource can only be `*`).
+**RAM permissions**: `ecs:DescribeInstances`, `ecs:DescribeCloudAssistantStatus` (without it `aca instances` can't show the state of the Cloud Assistant client), `ecs:RunCommand`, `ecs:DescribeInvocationResults`, `oss:PutObject`, `oss:GetObject`, `oss:ListObjects`, `oss:GetBucketPolicyStatus`, `oss:DeleteObject` (on a versioned bucket, `pull`, `logs`, `diff` and `certs replace` need `oss:DeleteObjectVersion` to delete the files they pass through OSS), and `slb:DescribeLoadBalancerAttribute`, `slb:DescribeLoadBalancerListeners`, `slb:DescribeHealthStatus` and `slb:SetBackendServers` for sites with `clb`; taking a certificate from the cloud needs `yundun-cert:ListUserCertificateOrder` and `yundun-cert:GetUserCertificateDetail` (Certificate Management Service authorizes per operation, so the resource can only be `*`).
 
 > [!WARNING]
 > Cloud Assistant runs scripts as SYSTEM: whoever holds this AccessKey, human or agent, is an administrator of every instance `ecs:RunCommand` is granted on. Grant it per instance ID, never `*`.
@@ -98,7 +98,9 @@ Credentials are resolved by the Alibaba Cloud SDK's [default credential chain](h
 ## Commands
 
 ```sh
-aca instances                                   # list instances
+aca instances                                   # list instances with the version of the Cloud Assistant client on each
+aca discover                                    # list the sites and services on every Windows server, with a config draft
+aca discover web1 web2                          # only these servers
 aca sites                                       # list sites with their project, publish directory and instances
 aca services                                    # list Windows services with their directory on the servers
 aca run web1 "Get-Website | select name,state"  # run any PowerShell as SYSTEM
@@ -124,6 +126,16 @@ aca rollback "Default Web Site" 20260918T020100Z  # roll back that deploy and ev
 aca clb "Default Web Site"                      # weight of each server in the CLB
 aca clb restore "Default Web Site" web1         # put web1, taken out earlier, back into the load balancer
 ```
+
+### `aca discover`
+
+aca lists the IIS sites and Windows services on the servers, and ends with a config draft to fill the config from. Without servers, it covers every running Windows server in the region.
+
+- **One line per site or service**: its state, directory and newest file time; a site adds its app pool, bitness, runtime and first three bindings, a service its start mode and command line.
+- **Only services installed outside the Windows, Program Files and ProgramData directories are listed**: the ones in there are Windows's own and installed software (the Cloud Assistant client, antivirus, databases), not programs you deploy yourself.
+- **The draft takes only what the config doesn't have yet**: running sites, and services that aren't disabled. Servers go by their alias in the config, or by instance name if they have none.
+- **A `NOTE` line comes when a site or service's newest file on one server is more than a day older than on another**: the copy on that server may be long out of use; make sure before adding it to the config or deploying there.
+- **A server that can't be looked at** (for example with its Cloud Assistant client offline) doesn't hold up the others; aca reports it at the end and exits non-zero.
 
 ### `aca run`
 

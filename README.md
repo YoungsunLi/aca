@@ -78,7 +78,7 @@ aca skill install  # 给 Claude Code、Codex 装上 skill，升级 aca 后再跑
 
 凭证按阿里云 SDK 的[默认凭证链](https://help.aliyun.com/zh/sdk/developer-reference/v2-manage-node-js-access-credentials)查找，和阿里云 CLI 共用：`aliyun configure` 配过就不用再配，也可以设环境变量 `ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET`，两处都配了时环境变量优先。
 
-**RAM 权限**：`ecs:DescribeInstances`、`ecs:RunCommand`、`ecs:DescribeInvocationResults`、`oss:PutObject`、`oss:GetObject`、`oss:ListObjects`、`oss:GetBucketPolicyStatus`、`oss:DeleteObject`（bucket 开了版本控制时，`pull`、`logs`、`diff` 和 `certs replace` 删 OSS 上中转的文件要 `oss:DeleteObjectVersion`），站点配了 `clb` 还要 `slb:DescribeLoadBalancerAttribute`、`slb:DescribeLoadBalancerListeners`、`slb:DescribeHealthStatus`、`slb:SetBackendServers`，取云端证书要 `yundun-cert:ListUserCertificateOrder`、`yundun-cert:GetUserCertificateDetail`（数字证书管理服务只支持操作级授权，资源只能写 `*`）。
+**RAM 权限**：`ecs:DescribeInstances`、`ecs:DescribeCloudAssistantStatus`（没有它 `aca instances` 看不到云助手客户端的状态）、`ecs:RunCommand`、`ecs:DescribeInvocationResults`、`oss:PutObject`、`oss:GetObject`、`oss:ListObjects`、`oss:GetBucketPolicyStatus`、`oss:DeleteObject`（bucket 开了版本控制时，`pull`、`logs`、`diff` 和 `certs replace` 删 OSS 上中转的文件要 `oss:DeleteObjectVersion`），站点配了 `clb` 还要 `slb:DescribeLoadBalancerAttribute`、`slb:DescribeLoadBalancerListeners`、`slb:DescribeHealthStatus`、`slb:SetBackendServers`，取云端证书要 `yundun-cert:ListUserCertificateOrder`、`yundun-cert:GetUserCertificateDetail`（数字证书管理服务只支持操作级授权，资源只能写 `*`）。
 
 > [!WARNING]
 > 云助手以 SYSTEM 身份执行脚本，`ecs:RunCommand` 授权到哪些实例，持有这份 AccessKey 的人和 Agent 就是哪些实例的管理员，按实例 ID 授权，不要给 `*`。
@@ -98,7 +98,9 @@ aca skill install  # 给 Claude Code、Codex 装上 skill，升级 aca 后再跑
 ## 命令
 
 ```sh
-aca instances                                   # 列出实例
+aca instances                                   # 列出实例和上面云助手客户端的版本
+aca discover                                    # 列出每台 Windows 服务器上的站点和服务，给出配置草稿
+aca discover web1 web2                          # 只看这几台
 aca sites                                       # 列出站点与项目、发布目录、实例的映射
 aca services                                    # 列出 Windows 服务与它们在服务器上的目录
 aca run web1 "Get-Website | select name,state"  # 以 SYSTEM 执行任意 PowerShell
@@ -124,6 +126,16 @@ aca rollback "Default Web Site" 20260918T020100Z  # 连同之后的发布一起�
 aca clb "Default Web Site"                      # 每台服务器在 CLB 里的权重
 aca clb restore "Default Web Site" web1         # 把摘下的 web1 放回负载均衡
 ```
+
+### `aca discover`
+
+aca 在服务器上列出 IIS 站点和 Windows 服务，最后给出一份配置草稿，写配置时照着填。不给服务器时盘点当前地域每台开着的 Windows 服务器。
+
+- **每行一个站点或服务**：状态、目录、最新文件的时间；站点再列应用池、位数、运行时和前三个绑定，服务列启动方式和命令行。
+- **只列装在 Windows、Program Files、ProgramData 目录以外的服务**：这三处的是 Windows 自己的和装上的软件（云助手客户端、杀毒、数据库），不是自己发布的程序。
+- **草稿只收配置里还没有的**：开着的站点和没禁用的服务。服务器写配置里的别名，没有别名的用实例名。
+- **同一个站点或服务，有的服务器上最新文件比别的服务器早一天以上时打一行 `NOTE`**：那台服务器上的可能是早就不用的副本，写进配置、发布之前先确认。
+- **一台服务器盘点不了**（比如云助手客户端离线）不耽误别的，最后报错并以非 0 退出。
 
 ### `aca run`
 
