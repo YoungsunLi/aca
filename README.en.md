@@ -325,7 +325,7 @@ On every server of the configured sites, aca does a TLS handshake on the server 
 
 On the same servers, aca switches every HTTPS binding that uses a certificate with the same subject name (e.g. `*.a.com`) to this certificate; the old certificates stay on the servers.
 
-- **`--from-cloud <certificate ID>` takes the certificate from Certificate Management Service**: `aca certs cloud` lists the IDs, aca downloads the PEM and builds the PFX on this machine with a password of its own, so no `--password-file`; RSA certificates only.
+- **`--from-cloud <certificate ID>` takes the certificate from Certificate Management Service**: `aca certs cloud` lists the IDs, aca downloads the PEM and builds the PFX on this machine with a password of its own, so no `--password-file`.
 - **It switches http.sys binding entries, not sites**: non-SNI bindings share one IP:port entry, so switching one of those sites switches them all; `--check` lists the sites on each entry.
 - **aca switches the servers one at a time**, with a handshake on the server itself for each HTTPS binding of the running sites before and after: every binding that served a certificate with that name must serve the new one afterwards, and one whose host name matched or whose chain the server trusted must still do so; otherwise that server switches back to the old certificates and aca stops there, leaving servers already switched as they are.
 - **Only one `certs replace` at a time can switch certificates on a server**; the lock is an exclusive handle on `%ProgramData%\aca-certs.aca-lock`.
