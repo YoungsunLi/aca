@@ -54,7 +54,7 @@ export function readSource(source: string | undefined, passwordFile?: string): C
     if (!/^[0-9A-F]{40}$/.test(thumbprint)) throw new Error(`${source} is neither a PFX file nor a certificate thumbprint`);
     return { kind: 'thumbprint', thumbprint };
   }
-  // 密码从文件读，不出现在命令行和 Agent 的上下文里；去掉编辑器加的 BOM 和末尾换行
+  // 密码从文件读，不出现在命令行和 AI Agent 的上下文里；去掉编辑器加的 BOM 和末尾换行
   const password = passwordFile ? readFileSync(passwordFile, 'utf8').replace(/^\uFEFF/, '').replace(/[\r\n]+$/, '') : '';
   return { kind: 'pfx', bytes: readFileSync(source), password };
 }

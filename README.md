@@ -10,11 +10,19 @@
 
 </div>
 
-通过[阿里云云助手](https://help.aliyun.com/zh/ecs/user-guide/overview-10)在 Windows ECS 上执行 PowerShell、发布和回退 IIS 站点与 Windows 服务、检查和更换 SSL 证书。
+在 Windows ECS 上自动发布 IIS 站点和 Windows 服务，也能回退、执行 PowerShell、检查和更换 SSL 证书。
 
-- **服务器上不用装东西、不用开端口**，只需 AccessKey。
-- **输出纯文本**，失败以非 0 退出码表示。
-- **附带 Agent Skill**：对 Claude Code、Codex 等 Agent 说"把 MyApp 发到测试站"，它会先 `--check` 给你看结果，等你确认了再发。
+- **服务器上不用另装东西、不用开端口**：aca 经[阿里云云助手](https://help.aliyun.com/zh/ecs/user-guide/overview-10)操作服务器，只需 AccessKey。
+- **发布前有预检查**：拦下拿错的旧构建、发布后才会报错的程序集引用、服务器上没装的 .NET Framework 版本。
+- **aca 不整份覆盖 .NET Framework 的 `web.config`**：只合进绑定重定向这类由构建决定的部分，连接串不动。
+- **aca 自动发完多台服务器**：逐台停下站点或服务、备份、覆盖、启动、检查，失败就停；配了 CLB 还先摘出负载均衡，发完放回。
+- **发坏了退得回去**：aca 每次发布都备份被覆盖的文件，用 `aca rollback` 一次能退回多次发布。
+- **看得到每台服务器上的实际情况**：用 `aca diff` 比对文件内容，用 `aca certs` 查实际发出的证书。
+- **用 `aca certs replace` 批量换证书**：aca 换完在服务器本机握手，不对就换回旧证书。
+- **附带 Agent Skill**：对 Claude Code、Codex 等 AI Agent 说"把 MyApp 发到测试站"，它会先 `--check` 给你看结果，等你确认了再发。
+
+> [!CAUTION]
+> 云助手以 SYSTEM 身份执行，`aca run` 能在服务器上执行**任意** PowerShell：持有这份 AccessKey 的人和 AI Agent 就是这些服务器的管理员。skill 要求 AI Agent 改动服务器前先让你确认，这是写给 AI Agent 的规则，不是权限控制。
 
 ## 安装
 
@@ -25,11 +33,11 @@ npm install -g @ninesols/aca-cli
 aca skill install  # 给 Claude Code、Codex 装上 skill，升级 aca 后再跑一次
 ```
 
-其他支持 Agent Skills 开放标准的 Agent 用 `npx skills add YoungsunLi/aca -g` 装，它会问装给哪些 Agent；装的是 GitHub 上最新的 skill，不一定和本机 aca 的版本一致。
+其他支持 Agent Skills 开放标准的 AI Agent 用 `npx skills add YoungsunLi/aca -g` 装，它会问装给哪些 AI Agent；装的是 GitHub 上最新的 skill，不一定和本机 aca 的版本一致。
 
 ## 配置
 
-在 `~/.aca/config.json` 写一份配置，或设置环境变量 `ACA_CONFIG` 指向别的路径。
+在 `~/.aca/config.json` 写一份配置，或设置环境变量 `ACA_CONFIG` 指向别的路径。先写好 `region` 和 `oss`，再跑 `aca discover`：aca 列出每台服务器上的站点和服务，最后给出 `instances`、`sites`、`services` 的草稿，照着填。
 
 ```json
 {
@@ -87,10 +95,17 @@ IIS 里挂在站点下的应用程序（IIS 管理器里"添加应用程序"建�
 
 凭证按阿里云 SDK 的[默认凭证链](https://help.aliyun.com/zh/sdk/developer-reference/v2-manage-node-js-access-credentials)查找，和阿里云 CLI 共用：`aliyun configure` 配过就不用再配，也可以设环境变量 `ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET`，两处都配了时环境变量优先。
 
-**RAM 权限**：`ecs:DescribeInstances`、`ecs:DescribeCloudAssistantStatus`（没有它 `aca instances` 看不到云助手客户端的状态）、`ecs:RunCommand`、`ecs:DescribeInvocationResults`、`oss:PutObject`、`oss:GetObject`、`oss:ListObjects`、`oss:GetBucketPolicyStatus`、`oss:DeleteObject`（bucket 开了版本控制时，`pull`、`logs`、`diff` 和 `certs replace` 删 OSS 上中转的文件要 `oss:DeleteObjectVersion`），站点配了 `clb` 还要 `slb:DescribeLoadBalancerAttribute`、`slb:DescribeLoadBalancerListeners`、`slb:DescribeHealthStatus`、`slb:SetBackendServers`，取云端证书要 `yundun-cert:ListUserCertificateOrder`、`yundun-cert:GetUserCertificateDetail`（数字证书管理服务只支持操作级授权，资源只能写 `*`）。
+**RAM 权限**：
+
+| 产品 | 权限 |
+| --- | --- |
+| ECS | `ecs:DescribeInstances`、`ecs:DescribeCloudAssistantStatus`（没有它 `aca instances` 看不到云助手客户端的状态）、`ecs:RunCommand`、`ecs:DescribeInvocationResults` |
+| OSS | `oss:PutObject`、`oss:GetObject`、`oss:ListObjects`、`oss:GetBucketPolicyStatus`、`oss:DeleteObject`；bucket 开了版本控制时，`pull`、`logs`、`diff` 和 `certs replace` 删 OSS 上中转的文件要 `oss:DeleteObjectVersion` |
+| CLB | 站点配了 `clb` 时要：`slb:DescribeLoadBalancerAttribute`、`slb:DescribeLoadBalancerListeners`、`slb:DescribeHealthStatus`、`slb:SetBackendServers` |
+| 数字证书管理服务 | 取云端证书时要：`yundun-cert:ListUserCertificateOrder`、`yundun-cert:GetUserCertificateDetail`；这个服务只支持操作级授权，资源只能写 `*` |
 
 > [!WARNING]
-> 云助手以 SYSTEM 身份执行脚本，`ecs:RunCommand` 授权到哪些实例，持有这份 AccessKey 的人和 Agent 就是哪些实例的管理员，按实例 ID 授权，不要给 `*`。
+> `ecs:RunCommand` 按实例 ID 授权，不要给 `*`：它授权到哪些实例，这份 AccessKey 就是哪些实例的管理员。
 
 ## 约束
 
@@ -106,35 +121,55 @@ IIS 里挂在站点下的应用程序（IIS 管理器里"添加应用程序"建�
 
 ## 命令
 
+每个命令都输出纯文本，失败以非 0 退出码表示。
+
+**服务器和配置**
+
 ```sh
 aca instances                                   # 列出实例和上面云助手客户端的版本
 aca discover                                    # 列出每台 Windows 服务器上的站点和服务，给出配置草稿
 aca discover web1 web2                          # 只看这几台
 aca sites                                       # 列出站点与项目、发布目录、实例的映射
 aca services                                    # 列出 Windows 服务与它们在服务器上的目录
+```
+
+**排查和临时运维**
+
+```sh
 aca run web1 "Get-Website | select name,state"  # 以 SYSTEM 执行任意 PowerShell
 aca pull web1 "C:\inetpub\logs\LogFiles\W3SVC1\u_ex260919.log"  # 把服务器上的文件拉到本机当前目录
 aca logs "Default Web Site"                     # 每台服务器上这个站点最新的 20 行 IIS 日志
 aca logs "Default Web Site" --since 30m -n 500  # 最近 30 分钟里最新的 500 行
-aca deploy "Default Web Site" ./publish --check # 只预检查，打印将覆盖/新增的文件，不停站
-aca deploy "Default Web Site" ./publish -m "release-2026-09"  # 目录或 zip；-m 写进发布记录
+aca diff "Default Web Site"                     # 按内容哈希比对每台服务器上的文件，列出不一样的
+aca diff "Default Web Site" bin                 # 只比站点目录下的一个目录
+```
+
+**发布和回退**
+
+```sh
+aca deploy "Default Web Site" --check           # 只预检查，打印将覆盖/新增的文件，不停站
+aca deploy "Default Web Site" -m "release-2026-09"  # 发配置里 publish 字段的目录；-m 写进发布记录
+aca deploy "Default Web Site" ./MyApp.zip -m "release-2026-09"  # 发别的目录或 zip，不用 publish 字段
 aca deploy "Default Web Site" --from-stage -m "release-2026-09"  # 直接发预发布站最近一次发布的那个包
-aca deploy MyApp.Worker ./publish -m "release-2026-09"  # 发 Windows 服务，参数和站点一样
+aca deploy MyApp.Worker -m "release-2026-09"    # 发 Windows 服务，参数和站点一样
 aca deploy "Default Web Site/api" ./api -m "release-2026-09"  # 发站点下的应用程序
 aca status "Default Web Site"                   # 每台服务器上最新的文件时间、服务的运行状态和最近 5 条发布/回退记录
 aca status                                      # 每个站点和服务在每台服务器上一行：状态、最新文件时间、最后一条发布/回退记录
-aca diff "Default Web Site"                     # 按内容哈希比对每台服务器上的文件，列出不一样的
-aca diff "Default Web Site" bin                 # 只比站点目录下的一个目录
-aca certs                                       # 每台服务器上运行中站点的 https 绑定实际发出的证书
-aca certs replace ./a.pfx --password-file ./pw.txt --check  # 看每台服务器会把哪些 https 绑定换成这张证书
-aca certs replace ./a.pfx --password-file ./pw.txt  # 换证书
-aca certs cloud                                 # 列出数字证书管理服务里没过期的证书和它们的 ID
-aca certs replace --from-cloud 22863954         # 换成云端这张证书，PFX 由 aca 合成
 aca rollback "Default Web Site" --check         # 每台服务器上还留着哪几次发布的备份、占多少空间、会撤掉哪几次
 aca rollback "Default Web Site"                 # 回退最近一次发布
 aca rollback "Default Web Site" 20260918T020100Z  # 连同之后的发布一起回退，退到这次发布之前
 aca clb "Default Web Site"                      # 每台服务器在 CLB 里的权重
 aca clb restore "Default Web Site" web1         # 把摘下的 web1 放回负载均衡
+```
+
+**证书**
+
+```sh
+aca certs                                       # 每台服务器上运行中站点的 https 绑定实际发出的证书
+aca certs replace ./a.pfx --password-file ./pw.txt --check  # 看每台服务器会把哪些 https 绑定换成这张证书
+aca certs replace ./a.pfx --password-file ./pw.txt  # 换证书
+aca certs cloud                                 # 列出数字证书管理服务里没过期的证书和它们的 ID
+aca certs replace --from-cloud 22863954         # 换成云端这张证书，PFX 由 aca 合成
 ```
 
 ### `aca discover`
@@ -191,9 +226,23 @@ aca 先在每台服务器上同时下载解压、预检查，每台都通过后�
 
 - **发布是增量的**：包里有什么就覆盖什么（`exclude` 的除外），可以只发几个改动的文件；目录里已有的上传文件、日志不动，环境配置只改下面说的几处，包里已删掉的文件也不会被清理。
 - **`--from-stage` 直接发预发布站最近一次成功发布的那个包**：aca 从 OSS 取这个包，不用本机的构建，也不重新上传；包已被生命周期规则清理掉时 aca 报错，这时改用本机路径发同一份构建。
+
+#### 预检查
+
 - **任何一台服务器预检查不过**（源码痕迹、包根目录里的环境配置、疑似发错目标、磁盘不足、包里有比服务器更旧的文件、发布后会加载失败的程序集引用、服务器缺包要的运行时），aca 哪台都不发，直接退出。"比服务器旧"意味着拿错了旧构建，或者服务器上有人手改过；确认要覆盖就加 `-f`。
 - **`exclude` 的文件不发，但预检查会列出两种**：包里有、服务器上还没有的；包里那份和上次发布时的不一样的，多半是开发改过它，服务器上那份可能也得跟着改。上次的哈希记在那次发布的备份清单里，第一次发布没有可比的。
-- **环境配置**指站点的 `web.config`、服务的 `<可执行文件>.exe.config`：它们在服务器上自己维护，出现在包根目录时 aca 报错，把它列进 `exclude` 就不会被整份覆盖；配了 `overwriteConfig` 的，aca 把它当普通文件发。
+- **预检查按运行时的规则解析发布后的每个程序集引用**：bin（服务是它的目录）里每个程序集引用的强名称程序集、环境配置里带版本的类型名，都按绑定重定向和 GAC 解析一遍。这类问题站点照样启动，要等用到那段代码才报错，首页检查拦不住。
+  - **这次发布让原来找得到的引用找不到了，或者新代码引用的版本和 bin 里的对不上**，aca 列出来，哪台服务器都不发。多半是升级了 NuGet 包却没带上绑定重定向：在项目的配置里补上、让包带着环境配置，aca 会把重定向同步过去；确认没问题再加 `-f`。
+  - **新代码引用的程序集在 bin 和 GAC 里都找不到时只提示**：可能是用不到的依赖，也可能是发布输出漏了文件。
+- **预检查还核对服务器满不满足这次发布带来的运行时要求**：下面前两样满足不了时，aca 列出来，哪台服务器都不发；在服务器上装好、调好再发，或者确认没问题加 `-f`。
+  - **.NET Framework 版本**：变了的程序集编译时的目标框架，和配置里新写上的 `targetFramework`、`startup` 的 `sku`，比服务器上装的新。
+  - **位数**：变了的程序集只能在 64 位进程里加载，站点的应用池却是 32 位，或者反过来。服务看可执行文件，AnyCPU 勾了"首选 32 位"的也跑在 32 位进程里；可执行文件换了位数，原来就在的程序集也重新核对。
+  - **.NET Core 的共享框架找不到时只提示**：包带来的 `runtimeconfig.json` 要的框架，按前滚规则在服务器上找不到。宿主去哪找、认哪个版本还受环境变量（`DOTNET_ROOT`、`DOTNET_ROLL_FORWARD` 等）影响，aca 看不全，所以不拦。
+
+#### 环境配置
+
+环境配置指站点的 `web.config`、服务的 `<可执行文件>.exe.config`：它们在服务器上自己维护，出现在包根目录时 aca 报错，把它列进 `exclude` 就不会被整份覆盖；配了 `overwriteConfig` 的，aca 把它当普通文件发。
+
 - **ASP.NET Core 的 `web.config` 是发布时生成的**，aca 直接当普通文件整份发：在服务器上那份里加的 `environmentVariables` 等设置会被覆盖，按服务器区分的值放到 `appsettings.<环境>.json` 或服务器的环境变量里。整份发的环境配置，服务器上那份和包里的不一样时预检查会提示。
 - **环境配置里由构建决定的部分跟着包走**：包里带着环境配置时（它在 `exclude` 里，本身不发），aca 把下面这些部分合进服务器上那份，连接串、`appSettings` 等其余内容和改动之外的每个字节都保持原样。
   - **按条目合并**：程序集绑定重定向（`runtime/assemblyBinding`）、`system.codedom` 的编译器、Entity Framework 的 `providers`、`compilation` 的 `assemblies`。包里有的条目以包为准，只在服务器上有的保留。
@@ -202,13 +251,9 @@ aca 先在每台服务器上同时下载解压、预检查，每台都通过后�
   - **预检查列出每处要改的内容**；服务器上那份放进这次发布的备份，`aca rollback` 会连它一起退回。预检查之后这份配置被人改过，aca 在停站前报错。
   - **不同步的情况**：服务器上那段里有包里没有的元素（如 `probing`）、同一段出现不止一次、所在的节用 `configSource` 放在别的文件里、文件不是 UTF-8 时，aca 不动这一段，打一行 `WARN`。
   - **包里那份新加的配置节、`appSettings` 键、连接串不合并**：它们的值按环境填，预检查只列出服务器上那份缺的名字；服务器上那份的 `appSettings` 或连接串放在别的文件里（`configSource`、`file`）时，这两样不比。
-- **预检查按运行时的规则解析发布后的每个程序集引用**：bin（服务是它的目录）里每个程序集引用的强名称程序集、环境配置里带版本的类型名，都按绑定重定向和 GAC 解析一遍。这类问题站点照样启动，要等用到那段代码才报错，首页检查拦不住。
-  - **这次发布让原来找得到的引用找不到了，或者新代码引用的版本和 bin 里的对不上**，aca 列出来，哪台服务器都不发。多半是升级了 NuGet 包却没带上绑定重定向：在项目的配置里补上、让包带着环境配置，aca 会把重定向同步过去；确认没问题再加 `-f`。
-  - **新代码引用的程序集在 bin 和 GAC 里都找不到时只提示**：可能是用不到的依赖，也可能是发布输出漏了文件。
-- **预检查还核对服务器满不满足这次发布带来的运行时要求**：下面前两样满足不了时，aca 列出来，哪台服务器都不发；在服务器上装好、调好再发，或者确认没问题加 `-f`。
-  - **.NET Framework 版本**：变了的程序集编译时的目标框架，和配置里新写上的 `targetFramework`、`startup` 的 `sku`，比服务器上装的新。
-  - **位数**：变了的程序集只能在 64 位进程里加载，站点的应用池却是 32 位，或者反过来。服务看可执行文件，AnyCPU 勾了"首选 32 位"的也跑在 32 位进程里；可执行文件换了位数，原来就在的程序集也重新核对。
-  - **.NET Core 的共享框架找不到时只提示**：包带来的 `runtimeconfig.json` 要的框架，按前滚规则在服务器上找不到。宿主去哪找、认哪个版本还受环境变量（`DOTNET_ROOT`、`DOTNET_ROLL_FORWARD` 等）影响，aca 看不全，所以不拦。
+
+#### 首页检查和负载均衡
+
 - **首页检查**在服务器本机请求站点的 `/`，5xx 或连不上、且和发布前的状态不同，就算这台服务器发布失败，文件不自动回退。预检查会打印发布前的首页状态。
   - **先走 http 绑定**，跳到本站的 https 绑定时改请求那个绑定，不校验证书；没有 http 绑定就直接走 https 绑定。
   - **跳到别的站点**（比如专门做跳转的另一个站点）时看的只是跳转的状态码，应用起没起来看不出。
@@ -220,6 +265,9 @@ aca 先在每台服务器上同时下载解压、预检查，每台都通过后�
   - **只管默认服务器组**：站点经转发规则走虚拟服务器组时，摘默认服务器组没有用。
   - **权重只管新连接**：七层（HTTP/HTTPS）监听每个请求都新建到服务器的连接，不受影响；四层（TCP/UDP）监听上已经建立的连接会一直连到这台服务器，停站时断开。
   - **同一个 CLB 上同时只有一个 `deploy` 或 `rollback`**：站点配了 `clb` 时，aca 把 CLB 连同站点一起占进租约（见下），这一轮走完之前，同一个 CLB 上别的站点发不了。
+
+#### 租约和锁
+
 - **同一个站点或服务同时只有一个 `deploy` 或 `rollback`**：aca 整轮持有一份租约，撞上的那个立即报错，写明是谁、在哪台机器上、从什么时候开始。
   - 租约是 OSS 上 `<oss.prefix>lease/` 下的一个对象，持有期间每 30 秒续一次，aca 被强杀后 3 分钟自动失效，不用手工解锁；快 2 分钟续不上时 aca 在动下一台服务器之前停下。
   - **只在配了同一个 bucket 和 `oss.prefix` 的 aca 之间有效**：租约就放在那里，指向别的 bucket 的 aca 看不见它，两边会同时发。

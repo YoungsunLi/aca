@@ -12,7 +12,7 @@ export type RunResult = { status: string; exitCode: number | undefined; output: 
 
 // Terminated 是在控制台点了"停止执行"
 const TERMINAL_STATUS = new Set(['Success', 'Failed', 'Error', 'Timeout', 'Cancelled', 'Stopped', 'Terminated', 'Invalid', 'Aborted']);
-// 云助手 Windows Agent（实测 2.1.4）按系统 ANSI 代码页解码输出，改成 UTF-8 反而乱码。
+// Windows 版云助手客户端（实测 2.1.4）按系统 ANSI 代码页解码输出，改成 UTF-8 反而乱码。
 // PS 3.0（Server 2012）脚本抛错后退出码仍为 0，trap 保证失败时非 0，aca run 的脚本也要靠它
 const PS_PREAMBLE = `[Console]::OutputEncoding = [Text.Encoding]::Default
 trap { 'ERROR: ' + $_.Exception.Message; exit 1 }

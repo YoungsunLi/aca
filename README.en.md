@@ -10,11 +10,19 @@
 
 </div>
 
-Run PowerShell on Windows ECS instances, deploy or roll back IIS sites and Windows services, and check or replace their SSL certificates through Alibaba Cloud [Cloud Assistant](https://www.alibabacloud.com/help/en/ecs/user-guide/overview-10).
+Deploy IIS sites and Windows services to Windows ECS instances automatically, roll them back, run PowerShell, and check or replace SSL certificates.
 
-- **Nothing to install and no ports to open on the servers**, just an AccessKey.
-- **Plain-text output** with non-zero exit codes on failure.
-- **Comes with an Agent Skill**: tell Claude Code, Codex or another agent "deploy MyApp to the test site", and it runs `--check` first, shows you the result and deploys after you confirm.
+- **Nothing else to install and no ports to open on the servers**: aca works through Alibaba Cloud [Cloud Assistant](https://www.alibabacloud.com/help/en/ecs/user-guide/overview-10) and needs just an AccessKey.
+- **A pre-check before every deploy**: it blocks a deploy with a stale build or assembly references that fail only when the code runs, or one that needs a .NET Framework version the server lacks.
+- **aca doesn't overwrite the `web.config` of a .NET Framework site whole**: it merges in only what the build decides, such as binding redirects, and leaves connection strings alone.
+- **aca deploys to multiple servers automatically**: one server at a time, it stops the site or service, backs up, copies over, starts and checks it, and stops at the first failure; with CLB, it takes the server out of the load balancer first and puts it back after.
+- **You can roll back a bad deploy**: aca backs up the files every deploy overwrites, and one `aca rollback` can undo several deploys.
+- **See what each server really has**: `aca diff` compares file contents across servers, and `aca certs` shows the certificates actually served.
+- **Replace certificates across servers with `aca certs replace`**: aca does a handshake on the server itself afterwards and switches back to the old certificate if anything is wrong.
+- **Comes with an Agent Skill**: tell Claude Code, Codex or another AI agent "deploy MyApp to the test site", and it runs `--check` first, shows you the result and deploys after you confirm.
+
+> [!CAUTION]
+> Cloud Assistant runs as SYSTEM, so `aca run` can run **any** PowerShell on the servers: whoever holds this AccessKey, human or AI agent, is their administrator. The skill tells AI agents to ask you before changing a server; that is a rule for the AI agent to follow, not a permission control.
 
 ## Install
 
@@ -25,11 +33,11 @@ npm install -g @ninesols/aca-cli
 aca skill install  # the skill for Claude Code and Codex; run it again after upgrading aca
 ```
 
-Other agents that support the open Agent Skills standard can install it with `npx skills add YoungsunLi/aca -g`, which asks which agents to install it for; it installs the latest skill on GitHub, which may not match your aca version.
+Other AI agents that support the open Agent Skills standard can install it with `npx skills add YoungsunLi/aca -g`, which asks which AI agents to install it for; it installs the latest skill on GitHub, which may not match your aca version.
 
 ## Configuration
 
-Write a config at `~/.aca/config.json`, or point the `ACA_CONFIG` environment variable at another path.
+Write a config at `~/.aca/config.json`, or point the `ACA_CONFIG` environment variable at another path. Start with `region` and `oss`, then run `aca discover`: aca lists the sites and services on every server and ends with a draft of `instances`, `sites` and `services` to fill the rest from.
 
 ```json
 {
@@ -87,10 +95,17 @@ An IIS application under a site (the kind "Add Application" creates in IIS Manag
 
 Credentials are resolved by the Alibaba Cloud SDK's [default credential chain](https://www.alibabacloud.com/help/en/sdk/developer-reference/v2-manage-node-js-access-credentials), shared with the Alibaba Cloud CLI: once you have run `aliyun configure` there is nothing more to set up; you can also set the environment variables `ALIBABA_CLOUD_ACCESS_KEY_ID` and `ALIBABA_CLOUD_ACCESS_KEY_SECRET`, which take precedence over `aliyun configure`.
 
-**RAM permissions**: `ecs:DescribeInstances`, `ecs:DescribeCloudAssistantStatus` (without it `aca instances` can't show the state of the Cloud Assistant client), `ecs:RunCommand`, `ecs:DescribeInvocationResults`, `oss:PutObject`, `oss:GetObject`, `oss:ListObjects`, `oss:GetBucketPolicyStatus`, `oss:DeleteObject` (on a versioned bucket, `pull`, `logs`, `diff` and `certs replace` need `oss:DeleteObjectVersion` to delete the files they pass through OSS), and `slb:DescribeLoadBalancerAttribute`, `slb:DescribeLoadBalancerListeners`, `slb:DescribeHealthStatus` and `slb:SetBackendServers` for sites with `clb`; taking a certificate from the cloud needs `yundun-cert:ListUserCertificateOrder` and `yundun-cert:GetUserCertificateDetail` (Certificate Management Service authorizes per operation, so the resource can only be `*`).
+**RAM permissions**:
+
+| Product | Permissions |
+| --- | --- |
+| ECS | `ecs:DescribeInstances`, `ecs:DescribeCloudAssistantStatus` (without it `aca instances` can't show the state of the Cloud Assistant client), `ecs:RunCommand`, `ecs:DescribeInvocationResults` |
+| OSS | `oss:PutObject`, `oss:GetObject`, `oss:ListObjects`, `oss:GetBucketPolicyStatus`, `oss:DeleteObject`; on a versioned bucket, `pull`, `logs`, `diff` and `certs replace` need `oss:DeleteObjectVersion` to delete the files they pass through OSS |
+| CLB | For sites with `clb`: `slb:DescribeLoadBalancerAttribute`, `slb:DescribeLoadBalancerListeners`, `slb:DescribeHealthStatus`, `slb:SetBackendServers` |
+| Certificate Management Service | To take certificates from the cloud: `yundun-cert:ListUserCertificateOrder`, `yundun-cert:GetUserCertificateDetail`; the service authorizes per operation, so the resource can only be `*` |
 
 > [!WARNING]
-> Cloud Assistant runs scripts as SYSTEM: whoever holds this AccessKey, human or agent, is an administrator of every instance `ecs:RunCommand` is granted on. Grant it per instance ID, never `*`.
+> Grant `ecs:RunCommand` per instance ID, never `*`: this AccessKey is an administrator of every instance it is granted on.
 
 ## Constraints
 
@@ -106,35 +121,55 @@ Credentials are resolved by the Alibaba Cloud SDK's [default credential chain](h
 
 ## Commands
 
+Every command prints plain text and exits non-zero on failure.
+
+**Servers and config**
+
 ```sh
 aca instances                                   # list instances with the version of the Cloud Assistant client on each
 aca discover                                    # list the sites and services on every Windows server, with a config draft
 aca discover web1 web2                          # only these servers
 aca sites                                       # list sites with their project, publish directory and instances
 aca services                                    # list Windows services with their directory on the servers
+```
+
+**Troubleshooting and ad-hoc operations**
+
+```sh
 aca run web1 "Get-Website | select name,state"  # run any PowerShell as SYSTEM
 aca pull web1 "C:\inetpub\logs\LogFiles\W3SVC1\u_ex260919.log"  # copy a file from a server to the current directory
 aca logs "Default Web Site"                     # the latest 20 lines of the site's IIS log on each server
 aca logs "Default Web Site" --since 30m -n 500  # the latest 500 lines of the last 30 minutes
-aca deploy "Default Web Site" ./publish --check # pre-check only: list the files to overwrite and add, the site keeps running
-aca deploy "Default Web Site" ./publish -m "release-2026-09"  # directory or zip; -m goes into the deploy log
+aca diff "Default Web Site"                     # compare the files on every server by content hash and list the ones that differ
+aca diff "Default Web Site" bin                 # compare one directory under the site directory only
+```
+
+**Deploy and roll back**
+
+```sh
+aca deploy "Default Web Site" --check           # pre-check only: list the files to overwrite and add, the site keeps running
+aca deploy "Default Web Site" -m "release-2026-09"  # deploy the directory in the publish field of the config; -m goes into the deploy log
+aca deploy "Default Web Site" ./MyApp.zip -m "release-2026-09"  # deploy another directory or zip, ignoring the publish field
 aca deploy "Default Web Site" --from-stage -m "release-2026-09"  # deploy the package the staging site last deployed
-aca deploy MyApp.Worker ./publish -m "release-2026-09"  # deploy a Windows service, same options as a site
+aca deploy MyApp.Worker -m "release-2026-09"    # deploy a Windows service, same options as a site
 aca deploy "Default Web Site/api" ./api -m "release-2026-09"  # deploy an application under a site
 aca status "Default Web Site"                   # newest file time, a service's state + last 5 deploy/rollback entries of each server
 aca status                                      # a line per server for every site and service: state, newest file time, last deploy/rollback
-aca diff "Default Web Site"                     # compare the files on every server by content hash and list the ones that differ
-aca diff "Default Web Site" bin                 # compare one directory under the site directory only
-aca certs                                       # certificates the HTTPS bindings of running sites actually serve on each server
-aca certs replace ./a.pfx --password-file ./pw.txt --check  # see which HTTPS bindings each server would switch to this certificate
-aca certs replace ./a.pfx --password-file ./pw.txt  # switch them
-aca certs cloud                                 # unexpired certificates in Certificate Management Service, and their IDs
-aca certs replace --from-cloud 22863954         # switch to that cloud certificate, PFX built by aca
 aca rollback "Default Web Site" --check         # the backups each server still has, their size, and which deploys would be undone
 aca rollback "Default Web Site"                 # roll back the latest deploy
 aca rollback "Default Web Site" 20260918T020100Z  # roll back that deploy and every deploy after it
 aca clb "Default Web Site"                      # weight of each server in the CLB
 aca clb restore "Default Web Site" web1         # put web1, taken out earlier, back into the load balancer
+```
+
+**Certificates**
+
+```sh
+aca certs                                       # certificates the HTTPS bindings of running sites actually serve on each server
+aca certs replace ./a.pfx --password-file ./pw.txt --check  # see which HTTPS bindings each server would switch to this certificate
+aca certs replace ./a.pfx --password-file ./pw.txt  # switch them
+aca certs cloud                                 # unexpired certificates in Certificate Management Service, and their IDs
+aca certs replace --from-cloud 22863954         # switch to that cloud certificate, PFX built by aca
 ```
 
 ### `aca discover`
@@ -191,9 +226,23 @@ aca first downloads, extracts and pre-checks on every server at the same time; o
 
 - **Deploys are incremental**: whatever is in the package gets overwritten (except `exclude`), so you can ship just a few changed files; uploads and logs already in the directory stay untouched, the environment config changes only where described below, and files removed from the package are not cleaned up.
 - **`--from-stage` deploys the package the staging site last deployed successfully**: aca takes that package from OSS, with no local build and no new upload; once the bucket's lifecycle rule has removed it, aca reports an error, and you deploy the same build from a local path instead.
+
+#### Pre-check
+
 - **When the pre-check fails on any server** (source code traces, an environment config at the package root, looks like the wrong target, not enough disk space, files older than the copies on the server, assembly references that would fail to load, a runtime the package needs but the server lacks), aca deploys to none of them and exits. Files older than the copies on the server mean an old build was picked up, or someone edited files on the server; add `-f` if you do want to overwrite them.
 - **Files in `exclude` aren't deployed, but the pre-check lists two kinds of them**: those the server doesn't have yet, and those whose copy in the package differs from the last deploy's, which usually means developers changed it and the server's copy may need the same change. The last deploy's hashes are kept in that deploy's backup manifest, so the first deploy has nothing to compare with.
-- **The environment config** is a site's `web.config` or a service's `<executable>.exe.config`: the server keeps its own, so aca refuses a package with one at its root; list it in `exclude` and it is never overwritten as a whole. With `overwriteConfig`, aca deploys it like any other file.
+- **The pre-check resolves every assembly reference after the deploy the way the runtime does**: the strong-named references of every assembly in bin (a service's directory for a service) and the versioned type names in the environment config, through the binding redirects and the GAC. Such problems don't stop the site from starting; they fail only when that code runs, so the home page check misses them.
+  - **If this deploy breaks a reference that resolved before, or new code references a version that doesn't match bin**, aca lists them and deploys to no server. Usually a NuGet package was upgraded without its binding redirects: add them to the project's config and let the package carry the environment config, and aca syncs the redirects over; add `-f` once you're sure it's fine.
+  - **If new code references an assembly found neither in bin nor in the GAC**, aca only warns: it may be an unused dependency, or a file missing from the publish output.
+- **The pre-check also verifies the server meets the runtime requirements this deploy brings**: when either of the first two below is unmet, aca lists it and deploys to no server. Install or adjust things on the server and deploy again, or add `-f` once you're sure it's fine.
+  - **.NET Framework version**: the target framework the changed assemblies were built for, and newly written `targetFramework` or `startup` `sku` values in the config, are newer than what the server has.
+  - **Bitness**: a changed assembly loads only in a 64-bit process while the site's app pool is 32-bit, or the other way round. For a service, the executable decides, and AnyCPU with "Prefer 32-bit" runs in a 32-bit process too; when the executable's bitness changes, the assemblies already there are checked again.
+  - **A missing .NET Core shared framework only gets a warning**: a framework the package's `runtimeconfig.json` asks for can't be found on the server under its roll-forward rule. Where the host looks and which version it accepts also depend on environment variables (`DOTNET_ROOT`, `DOTNET_ROLL_FORWARD` and others) that aca can't fully see, so it doesn't block.
+
+#### Environment config
+
+The environment config is a site's `web.config` or a service's `<executable>.exe.config`: the server keeps its own, so aca refuses a package with one at its root; list it in `exclude` and it is never overwritten as a whole. With `overwriteConfig`, aca deploys it like any other file.
+
 - **The `web.config` of ASP.NET Core is generated at publish**, so aca deploys it whole like any other file: settings added to the server's copy, such as `environmentVariables`, are overwritten; keep per-server values in `appsettings.<environment>.json` or in the server's environment variables. When an environment config deployed whole differs from the server's copy, the pre-check says so.
 - **The parts of the environment config that the build decides follow the package**: when the package carries the environment config (it is in `exclude`, so it isn't deployed itself), aca merges the parts below into the server's copy, leaving connection strings, `appSettings` and everything else, and every byte outside the changes, as they were.
   - **Merged entry by entry**: assembly binding redirects (`runtime/assemblyBinding`), the `system.codedom` compilers, Entity Framework `providers` and `compilation` `assemblies`. An entry in the package replaces the server's entry for the same thing; entries only on the server are kept.
@@ -202,13 +251,9 @@ aca first downloads, extracts and pre-checks on every server at the same time; o
   - **The pre-check lists every change**; the server's copy goes into this deploy's backup, so `aca rollback` restores it too. If someone edits the file after the pre-check, aca fails before stopping the site.
   - **When it doesn't sync**: if the server's section has elements the package's lacks (such as `probing`), a section appears more than once, its config section is kept in another file with `configSource`, or the file isn't UTF-8, aca leaves that section alone and prints a `WARN` line.
   - **Sections, `appSettings` keys and connection strings new in the package's copy are not merged**: their values depend on the environment, so the pre-check only lists the names missing from the server's copy. When the server's copy keeps `appSettings` or connection strings in another file (`configSource`, `file`), those two are not compared.
-- **The pre-check resolves every assembly reference after the deploy the way the runtime does**: the strong-named references of every assembly in bin (a service's directory for a service) and the versioned type names in the environment config, through the binding redirects and the GAC. Such problems don't stop the site from starting; they fail only when that code runs, so the home page check misses them.
-  - **If this deploy breaks a reference that resolved before, or new code references a version that doesn't match bin**, aca lists them and deploys to no server. Usually a NuGet package was upgraded without its binding redirects: add them to the project's config and let the package carry the environment config, and aca syncs the redirects over; add `-f` once you're sure it's fine.
-  - **If new code references an assembly found neither in bin nor in the GAC**, aca only warns: it may be an unused dependency, or a file missing from the publish output.
-- **The pre-check also verifies the server meets the runtime requirements this deploy brings**: when either of the first two below is unmet, aca lists it and deploys to no server. Install or adjust things on the server and deploy again, or add `-f` once you're sure it's fine.
-  - **.NET Framework version**: the target framework the changed assemblies were built for, and newly written `targetFramework` or `startup` `sku` values in the config, are newer than what the server has.
-  - **Bitness**: a changed assembly loads only in a 64-bit process while the site's app pool is 32-bit, or the other way round. For a service, the executable decides, and AnyCPU with "Prefer 32-bit" runs in a 32-bit process too; when the executable's bitness changes, the assemblies already there are checked again.
-  - **A missing .NET Core shared framework only gets a warning**: a framework the package's `runtimeconfig.json` asks for can't be found on the server under its roll-forward rule. Where the host looks and which version it accepts also depend on environment variables (`DOTNET_ROOT`, `DOTNET_ROLL_FORWARD` and others) that aca can't fully see, so it doesn't block.
+
+#### Home page check and load balancer
+
 - **The home page check** requests the site's `/` on the server itself; a 5xx or no connection that differs from the status before the deploy fails that server; files are not rolled back automatically. The pre-check prints the home page status before the deploy.
   - **An http binding comes first**; a redirect to one of the site's own https bindings is followed to that binding, without validating the certificate. A site without an http binding is checked over an https binding.
   - **A redirect to another site** (such as a separate site that only redirects) leaves just the redirect's status code, which says nothing about whether the application started.
@@ -220,6 +265,9 @@ aca first downloads, extracts and pre-checks on every server at the same time; o
   - **Only the default server group is handled**: for a site whose traffic goes through a VServer group via forwarding rules, taking servers out of the default server group does nothing.
   - **Weights only affect new connections**: layer-7 (HTTP/HTTPS) listeners open a new connection to the server for every request, so they are not affected; connections already established through layer-4 (TCP/UDP) listeners stay on the server and break when its site stops.
   - **Only one `deploy` or `rollback` runs on a CLB at a time**: for a site with `clb`, aca holds the lease (below) on the CLB as well as on the site, so deploying another site on the same CLB fails until the run is over.
+
+#### Leases and locks
+
 - **Only one `deploy` or `rollback` runs on a site or service at a time**: aca holds a lease for the whole run, and the other one fails right away, naming who holds it, on which machine and since when.
   - The lease is an object under `<oss.prefix>lease/` on OSS, renewed every 30 seconds while held; it expires 3 minutes after aca is killed, so there is nothing to unlock by hand, and aca stops before the next server once it has gone nearly 2 minutes without a successful renewal.
   - **It only works between aca installs configured with the same bucket and `oss.prefix`**: that is where the lease lives, and an aca pointed at another bucket cannot see it, so both would deploy at once.

@@ -179,7 +179,7 @@ clb.command('restore <site> <instance>').description('Put a server back into the
     }
   });
 
-program.command('skill').description('Agent Skill that lets Claude Code, Codex and other agents use aca')
+program.command('skill').description('Agent Skill that lets Claude Code, Codex and other AI agents use aca')
   .command('install').description('Install or update the skill in ~/.claude/skills (Claude Code) and ~/.agents/skills (Codex); run again after upgrading aca')
   .action(() => {
     for (const agentDir of ['.claude', '.agents']) {

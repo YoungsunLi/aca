@@ -43,7 +43,7 @@ export type Config = {
 
 // 配置的校验都在这里做一次，后面的代码直接信任它
 export function loadConfig(): Config {
-  // 不找当前目录：Agent 在别人的仓库里运行时，会悄悄用上那边的配置
+  // 不找当前目录：AI Agent 在别人的仓库里运行时，会悄悄用上那边的配置
   const file = resolve(process.env.ACA_CONFIG || join(homedir(), '.aca', 'config.json'));
   if (!existsSync(file)) throw new Error(`Config file not found: ${file}`);
 
