@@ -35,7 +35,12 @@ function Read-AcaSource {
     if ($leaf.Count -ne 1) { throw "The PFX must hold exactly one certificate with a private key, found $($leaf.Count)" }
     New-Object Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList (, $leaf[0].RawData)
   } finally {
-    foreach ($c in $content) { $c.Reset() }
+    # Server 2012 上 Reset 删不掉 CNG 里的临时私钥，ECC 的私钥只放得进 CNG，要自己删；取 CNG 私钥的托管接口 .NET 4.6.1 才有，更早的 .NET 上不删
+    $ecdsa = 'System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions' -as [type]
+    foreach ($c in $content) {
+      if ($ecdsa -and $c.HasPrivateKey -and $c.PublicKey.Oid.Value -eq '1.2.840.10045.2.1') { $ecdsa::GetECDsaPrivateKey($c).Key.Delete() }
+      $c.Reset()
+    }
   }
 }
 # 中间证书放进"中级证书颁发机构"，http.sys 才发得出完整的证书链；根证书信不信任不归这里定
