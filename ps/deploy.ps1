@@ -52,9 +52,11 @@ try {
       if ($added -notcontains $rel) { Copy-AcaFile (Join-Path $root $rel) (Join-Path $backup $rel) }
     }
     foreach ($c in $configs) { Copy-AcaFile (Join-Path $root $c.Name) (Join-Path $backup $c.Name) }
+    $newDirs = @()
+    foreach ($rel in $added) { for ($d = Split-Path $rel; $d -and $newDirs -notcontains $d -and -not (Test-Path -LiteralPath (Join-Path $root $d)); $d = Split-Path $d) { $newDirs += $d } }
     # 清单的格式见 Read-AcaManifest；新增文件和备份集合按同一份 $added 算，回退时恢复和删除才不会打架。
     # 备份全部写完才写清单：没清单的目录不算备份，复制到一半的不会被拿去回退
-    Set-Content -LiteralPath $manifest -Value (@($deployId) + $added + @($hashes.Keys | Where-Object { Test-AcaExcluded $_ $exclude } | ForEach-Object { "$acaExcludedTag$($hashes[$_])\$_" })) -Encoding UTF8
+    Set-Content -LiteralPath $manifest -Value (@($deployId) + $added + @($newDirs | ForEach-Object { "$acaDirTag$_" }) + @($hashes.Keys | Where-Object { Test-AcaExcluded $_ $exclude } | ForEach-Object { "$acaExcludedTag$($hashes[$_])\$_" })) -Encoding UTF8
     foreach ($f in $files) { Copy-AcaFile $f.FullName (Join-Path $root $f.FullName.Substring($new.Length + 1)) }
     foreach ($c in $configs) { Copy-AcaFile $c.FullName (Join-Path $root $c.Name) }
   } catch {

@@ -8,15 +8,17 @@ function Get-AcaBackups($base, $kind = 'bak') {
     Where-Object { $_.Name -match ('^' + [regex]::Escape($prefix) + '\d{8}-\d{6}$') -and (Test-Path -LiteralPath (Join-Path $_.FullName 'aca-manifest.txt')) } |
     Sort-Object Name
 }
-# 清单第一行是发布 ID，其余是这次新增的文件，回退时删掉。包里被排除的文件的哈希也记在这里，下次发布拿来比包里那份变没变；
-# 写成服务器上不会有的相对路径，旧版 aca 回退时当成新增文件去删，找不到就跳过
+# 清单第一行是发布 ID，其余是这次新增的文件，回退时删掉。带标记的行是清单自己的记录，写成服务器上不会有的相对路径，
+# 旧版 aca 回退时当成新增文件去删，找不到就跳过：.aca-excluded\<哈希>\<路径> 是包里被排除的文件的哈希，下次发布拿来比包里那份变没变；
+# .aca-dir\<路径> 是这次发布新建的目录，只有回退用，它自己从 Rest 里挑，不占 check 的 24 KB
 $acaExcludedTag = '.aca-excluded\'
+$acaDirTag = '.aca-dir\'
 function Read-AcaManifest($backup) {
   $lines = @(Get-Content -LiteralPath (Join-Path $backup 'aca-manifest.txt'))
   $rest = @($lines | Select-Object -Skip 1)
   $excluded = @{}
   foreach ($l in @($rest | Where-Object { $_.StartsWith($acaExcludedTag) })) { $hash, $rel = $l.Substring($acaExcludedTag.Length) -split '\\', 2; $excluded[$rel] = $hash }
-  New-Object psobject -Property @{ Id = $lines[0]; Added = @($rest | Where-Object { -not $_.StartsWith($acaExcludedTag) }); Excluded = $excluded }
+  New-Object psobject -Property @{ Id = $lines[0]; Added = @($rest | Where-Object { -not $_.StartsWith($acaExcludedTag) -and -not $_.StartsWith($acaDirTag) }); Excluded = $excluded; Rest = $rest }
 }
 # 按流算，几 GB 的文件也不整个读进内存
 function Get-AcaFileHash($path) {

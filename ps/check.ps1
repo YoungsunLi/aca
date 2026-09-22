@@ -46,7 +46,7 @@ try {
   $src = @($rels | Where-Object { $_ -match '^(\.git|\.vs|obj|node_modules)\\|\.(csproj|sln|cs)$' })
   if ($src) { throw "Package looks like a source directory, not publish output, e.g. $($src[0..2] -join ', ')" }
   if ($rels -contains 'aca-manifest.txt') { throw 'Package root contains aca-manifest.txt, which would overwrite the backup manifest of the same name; remove it from the package' }
-  if (@($rels | Where-Object { $_.StartsWith($acaExcludedTag) })) { throw "Package contains files under $acaExcludedTag, a path the backup manifest keeps for its own records; remove them from the package" }
+  if (@($rels | Where-Object { $_.StartsWith('.aca-') })) { throw 'Package has a top-level path starting with .aca-, a prefix the backup manifest keeps for its own records; remove it from the package' }
   $rootTop = @(Get-ChildItem -LiteralPath $root | ForEach-Object Name)
   $pkgTop = @($rels | ForEach-Object { ($_ -split '\\')[0] } | Select-Object -Unique)
   if ($rootTop -and -not @($pkgTop | Where-Object { $rootTop -contains $_ })) {

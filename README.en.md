@@ -252,7 +252,7 @@ Whether you undo this deploy or fix it and deploy again, first run `aca rollback
 
 ### `aca rollback`
 
-On each server, aca restores the files a deploy overwrote, deletes the files it added, restarts the site or service, then deletes the backup it used. Without a deploy ID it rolls back the latest deploy only; rolling back again undoes the one before it.
+On each server, aca restores the files a deploy overwrote, deletes the files and directories it added, restarts the site or service, then deletes the backup it used. Without a deploy ID it rolls back the latest deploy only; rolling back again undoes the one before it.
 
 - **`--check` lists the backups each server still has**, newest first: the deploy ID, how many files it would restore and delete, and its size, followed by that deploy's line in the deploy log (time, outcome, `-m` note). `undo` marks the ones this rollback would undo, `keep` the ones it leaves alone; a server with nothing to undo is marked `skipped`, most likely because those deploys never reached it.
 - **Given a deploy ID, aca undoes that deploy and every deploy after it in one go**, back to the version before that deploy. Backups stack on top of each other, so one in the middle can't be undone alone; each server stops only once, and the versions in between are never started.

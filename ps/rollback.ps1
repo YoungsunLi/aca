@@ -10,7 +10,8 @@ $locks = @(Lock-AcaTarget $web $base)
 try {
   $steps = @(Get-AcaBackups $base | Select-Object -Last $deploys.Count | ForEach-Object {
     $m = Read-AcaManifest $_.FullName
-    New-Object psobject -Property @{ Backup = $_.FullName; Id = $m.Id; Added = $m.Added }
+    $dirs = @($m.Rest | Where-Object { $_.StartsWith($acaDirTag) } | ForEach-Object { $_.Substring($acaDirTag.Length) })
+    New-Object psobject -Property @{ Backup = $_.FullName; Id = $m.Id; Added = $m.Added; Dirs = $dirs }
   })
   [array]::Reverse($steps)
   # 计划和执行之间可能又发布过一次，那样该先退的是更新的那份备份
@@ -28,6 +29,11 @@ try {
       foreach ($rel in $step.Added) {
         $p = Join-Path $root $rel
         if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force }
+      }
+      # 只删空的：发布之后放进去的东西不归回退管
+      foreach ($rel in @($step.Dirs | Sort-Object Length -Descending)) {
+        $p = Join-Path $root $rel
+        if ((Test-Path -LiteralPath $p) -and -not @(Get-ChildItem -LiteralPath $p -Force)) { Remove-Item -LiteralPath $p -Force }
       }
       $counts = "restored $($files.Count) deleted $($step.Added.Count)"
       "Rolled back deploy $($step.Id): $counts"
