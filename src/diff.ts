@@ -2,7 +2,7 @@ import { text } from 'node:stream/consumers';
 import { type Config, getTarget, targetVars } from './config.ts';
 import { Ecs, inParallel } from './ecs.ts';
 import { viaOss } from './oss.ts';
-import { renderScript } from './ps.ts';
+import { renderScript, targetLibs } from './ps.ts';
 
 /** 整个目录要逐个文件算哈希，时限和发布一样给足 */
 const TIMEOUT = 1800;
@@ -45,7 +45,7 @@ async function listFiles(cfg: Config, ecs: Ecs, vars: Record<string, string>, in
     cfg,
     'diff',
     TIMEOUT,
-    (oss) => ecs.runPowerShell(instance, renderScript('diff', { ...vars, ...oss }, ['target', 'upload']), TIMEOUT),
+    (oss) => ecs.runPowerShell(instance, renderScript('diff', { ...vars, ...oss }, [...targetLibs(vars.NAME), 'upload']), TIMEOUT),
     text,
   );
   if (result.status !== 'Success') throw new Error(`${instance}: could not list the files: ${result.output.trim() || result.error}`);

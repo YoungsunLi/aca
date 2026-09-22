@@ -1,10 +1,13 @@
+# 站点下的应用程序写成 站点/路径，Get-AcaApp 在 app.ps1 里，目标是应用时才带上
 function Get-AcaSite($name) {
-  $web = Get-Website -Name $name
-  if (-not $web) { throw "IIS site not found: $name" }
+  $site = ($name -split '/')[0]
+  $web = Get-Website -Name $site
+  if (-not $web) { throw "IIS site not found: $site" }
+  if ($site -ne $name) { return Get-AcaApp $web $name }
   $web
 }
-# 去掉末尾反斜杠，否则 "$root.bak-x" 会落到站点目录里面被 IIS 对外提供
-function Get-AcaRoot($web) { [Environment]::ExpandEnvironmentVariables($web.physicalPath).TrimEnd('\') }
+# 去掉末尾反斜杠，否则 "$root.bak-x" 会落到站点目录里面被 IIS 对外提供；规范成完整路径，IIS 里写成 C:/x 的比包含关系时才对得上
+function Get-AcaRoot($web) { [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($web.physicalPath)).TrimEnd('\') }
 # 服务的目录只能从 aca 配置来，站点的目录是 IIS 给的：配错了会把包盖到不相干的目录上，所以核对服务的可执行文件确实在里面。
 # 服务名不进 WMI 查询串，免得名字里的引号改写查询
 function Get-AcaServiceRoot($name, $dir) {

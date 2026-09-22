@@ -59,7 +59,7 @@ Write a config at `~/.aca/config.json`, or point the `ACA_CONFIG` environment va
 }
 ```
 
-The keys of `sites` are IIS site names; `deploy`, `rollback` and `status` only accept sites registered here and the services registered in `services` below. Every field except `instances` is optional:
+The keys of `sites` are IIS site names, with an application under a site written as `site name/path` (see "Applications under a site" below); `deploy`, `rollback` and `status` only accept sites registered here and the services registered in `services` below. Every field except `instances` is optional:
 
 | Field | Description |
 | --- | --- |
@@ -73,6 +73,15 @@ The keys of `sites` are IIS site names; `deploy`, `rollback` and `status` only a
 | `project`<br>`note` | Only shown by `aca sites` and `aca services`, to help find the right site or service |
 
 The keys of `services` are Windows service names (the ones `sc query` lists, not the display names). The fields are the same as for a site, without `stage` and `clb`, plus a required `dir`: the installation directory on the servers; aca checks that the service's executable really is inside it and refuses to deploy otherwise.
+
+### Applications under a site
+
+An IIS application under a site (the kind "Add Application" creates in IIS Manager) is written as `site name/path`, such as `Default Web Site/api`, and registered in `sites` with the same fields as a site. Where it differs from a site:
+
+- **Only the application's own app pool is stopped**, and the site keeps serving its other applications; when the app pool is shared with the site or other applications, the pre-check lists the ones that go down with it.
+- **The home page check requests `/<path>/`**, and `aca logs` takes only the requests under that path.
+- **When the application's directory is inside the site's, or another application's or virtual directory's of the same site, its backups and deploy log go next to the outermost directory containing it**, under `<that directory>.aca-apps\<relative path>`: next to the application's directory they would land inside that directory and IIS would serve them. If the site itself is deployed too, list the application's directory in the site's `exclude`, so `aca diff` of the site doesn't compare the application's files as well.
+- **Deploying an application holds the lease and the server-side lock of its site too**: deploying the site stops it, and the applications under it with it.
 
 ### Credentials and permissions
 
@@ -88,7 +97,7 @@ Credentials are resolved by the Alibaba Cloud SDK's [default credential chain](h
 - **ECS and the OSS bucket are in the same region**; packages are downloaded over the OSS internal network.
 - **Servers need the [Cloud Assistant client](https://www.alibabacloud.com/help/en/ecs/user-guide/install-the-cloud-assistant-agent#775c8cd747xcj)** (preinstalled on servers created from public images since December 2017).
 - **Cloud Assistant returns output in the server's ANSI code page**: characters outside it (e.g. Chinese on English Windows) in site names, paths and `-m` notes turn into question marks.
-- **A site or service directory must be a plain directory on a local drive**, not a drive root or a UNC path, and not nested inside another target's directory: backups and the deploy log live next to it.
+- **A site or service directory must be a plain directory on a local drive**, not a drive root or a UNC path, and not nested inside another target's directory (applications under a site aside, see "Applications under a site"): backups and the deploy log live next to it.
 - **The `<root>.bak-<time>` backups and `<root>.aca-*` files next to that directory are aca's state; don't delete them by hand**: without the latest backup, `rollback` skips that deploy and restores a mix that was never deployed.
 - **After a deploy the site and its app pool are started**, even if they had been stopped by hand; a service is the opposite: one stopped before the deploy is left stopped, since on a standby server a service is often stopped on purpose.
 - **This machine and the servers must be in the same time zone**: file times in the package are stored as local time, and the check for files older than the copies on the server relies on them.
@@ -111,6 +120,7 @@ aca deploy "Default Web Site" ./publish --check # pre-check only: list the files
 aca deploy "Default Web Site" ./publish -m "release-2026-09"  # directory or zip; -m goes into the deploy log
 aca deploy "Default Web Site" --from-stage -m "release-2026-09"  # deploy the package the staging site last deployed
 aca deploy MyApp.Worker ./publish -m "release-2026-09"  # deploy a Windows service, same options as a site
+aca deploy "Default Web Site/api" ./api -m "release-2026-09"  # deploy an application under a site
 aca status "Default Web Site"                   # newest file time, a service's state + last 5 deploy/rollback entries of each server
 aca status                                      # a line per server for every site and service: state, newest file time, last deploy/rollback
 aca diff "Default Web Site"                     # compare the files on every server by content hash and list the ones that differ

@@ -1,12 +1,14 @@
 # 从新到旧每行：发布 ID|可恢复文件数|新增文件数|占用字节数|那次发布的记录；清理过旧备份的再加一行 pruned|清理到的发布 ID
 $name = '__NAME__'
 $dir = '__DIR__'
-$root = if ($dir) { Get-AcaServiceRoot $name $dir } else { Get-AcaRoot (Get-AcaSite $name) }
-$log = if (Test-Path -LiteralPath "$root.aca-log.txt") { @(Get-Content -LiteralPath "$root.aca-log.txt") } else { @() }
+$web = if ($dir) { $null } else { Get-AcaSite $name }
+$root = if ($dir) { Get-AcaServiceRoot $name $dir } else { Get-AcaRoot $web }
+$base = Get-AcaBase $web $root
+$log = if (Test-Path -LiteralPath "$base.aca-log.txt") { @(Get-Content -LiteralPath "$base.aca-log.txt") } else { @() }
 $ids = @()
 # 回退靠这份列表，输出超过云助手的上限就退不了；记录只是给人看的，给它一个额度，备份太多时较旧的不带
 $room = 12KB
-Get-AcaBackups $root | Sort-Object Name -Descending | ForEach-Object {
+Get-AcaBackups $base | Sort-Object Name -Descending | ForEach-Object {
   $m = Read-AcaManifest $_.FullName
   $ids += $m.Id
   $files = @(Get-ChildItem -LiteralPath $_.FullName -Recurse -File)
@@ -17,4 +19,4 @@ Get-AcaBackups $root | Sort-Object Name -Descending | ForEach-Object {
   $m.Id + '|' + ($files.Count - 1) + '|' + $m.Added.Count + '|' + ($files | Measure-Object Length -Sum).Sum + '|' + $entry
 }
 # 清理是先记录再改名，改名失败的备份还在，不算清理掉了
-if (Test-Path -LiteralPath "$root.aca-pruned") { 'pruned|' + (Get-Content -LiteralPath "$root.aca-pruned" | Where-Object { $_ -and $ids -notcontains $_ } | Sort-Object | Select-Object -Last 1) }
+if (Test-Path -LiteralPath "$base.aca-pruned") { 'pruned|' + (Get-Content -LiteralPath "$base.aca-pruned" | Where-Object { $_ -and $ids -notcontains $_ } | Sort-Object | Select-Object -Last 1) }

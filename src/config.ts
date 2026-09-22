@@ -34,7 +34,7 @@ export type Config = {
   oss: { bucket: string; prefix?: string };
   /** 实例别名 → 实例 ID，让 sites 里能写 web1 这种可读名字 */
   instances: Record<string, string>;
-  /** key 是 IIS 站点名 */
+  /** key 是 IIS 站点名，站点下的应用写成 站点/路径 */
   sites: Record<string, Site>;
   /** key 是 Windows 服务名 */
   services: Record<string, Service>;
@@ -54,6 +54,8 @@ export function loadConfig(): Config {
   // OSS 对象名没有前导斜杠，SDK 写的时候会去掉、列举的时候不会，两边对不上租约就形同虚设
   if (oss.prefix) oss.prefix = oss.prefix.replace(/^\/+/, '');
   for (const [name, site] of Object.entries<Site>(sites)) {
+    // 服务器上按第一个 / 拆出站点和应用路径，空的一段找不到东西
+    if (name.split('/').some((part) => !part)) throw new Error(`${file}: site "${name}" has an empty part; an IIS application is written as <site>/<path>, like Default Web Site/api`);
     checkDeployable(file, `site "${name}"`, site, instances);
     if (site.stage !== undefined && (typeof site.stage !== 'string' || site.stage === name || !Object.hasOwn(sites, site.stage))) throw new Error(`${file}: stage "${site.stage}" of site "${name}" is not another site in sites`);
     if (site.clb !== undefined && !(typeof site.clb === 'string' && site.clb.startsWith('lb-'))) throw new Error(`${file}: clb of site "${name}" must be a CLB instance ID (lb-...)`);

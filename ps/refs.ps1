@@ -105,8 +105,13 @@ $root = if ($dir) { Get-AcaServiceRoot $name $dir } else { Get-AcaRoot $web }
 # 放在这里而不在 check：check 带着签名 URL，离 RunCommand 的 24 KB 最近
 if ($web) {
   $pool = $web.applicationPool
-  $shared = @(Get-Website | Where-Object { $_.name -ne $name -and $_.applicationPool -eq $pool } | ForEach-Object name)
-  if ($shared) { "NOTE: app pool $pool is shared with site(s) $($shared -join ', '), which will also be down for a few seconds" }
+  # 站点的根应用和站点下的应用都可能用着这个应用池
+  $shared = @(Get-Website | ForEach-Object {
+    $s = $_.name
+    if ($_.applicationPool -eq $pool) { $s }
+    Get-WebApplication -Site $s | Where-Object { $_.applicationPool -eq $pool } | ForEach-Object { "$s$($_.path)" }
+  } | Where-Object { $_ -ne $name })
+  if ($shared) { "NOTE: app pool $pool is shared with $($shared -join ', '), which will also be down for a few seconds" }
 }
 $passed = $false
 try {

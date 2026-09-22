@@ -11,6 +11,9 @@ const COMMON = read('common');
 // 只把单引号翻倍不够：PowerShell 把 ‘ ’ ‚ ‛ 也当单引号定界符，-m 里一对中文引号就能逃出字符串。
 // 引号写成可选是为了把漏写引号的占位符也匹配到并报错，而不是原样留在脚本里运到服务器。
 // libs 是只有部分脚本用的函数文件，不放进 common.ps1，免得挤占 deploy 的 24 KB
+/** 站点下的应用（站点/路径）要多带 app.ps1：这段只有应用用得上，不占别的目标的 24 KB */
+export const targetLibs = (...names: string[]) => (names.some((n) => n.includes('/')) ? ['target', 'app'] : ['target']);
+
 export function renderScript(name: string, vars: Record<string, string>, libs: string[] = []): string {
   return (COMMON + libs.map(read).join('') + read(name)).replace(/'?__([A-Z0-9_]+)__'?/g, (m, key: string) => {
     if (!m.startsWith("'") || !m.endsWith("'")) throw new Error(`Placeholder ${key} in script ${name} must be written as '__${key}__'`);

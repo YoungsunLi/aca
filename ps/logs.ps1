@@ -5,6 +5,9 @@ $until = '__UNTIL__'
 # 一天的日志能有上百 MB，时间段在文件末尾时要从头读完，别跟 IIS 的工作进程抢 CPU
 [Diagnostics.Process]::GetCurrentProcess().PriorityClass = 'BelowNormal'
 $web = Get-AcaSite $name
+# 应用和站点记在同一个日志里，只取应用路径下的请求，再去掉更深一层的应用（/api 下的 /api/v2）；W3C 日志里路径的空格写成 +
+$appPrefix = "$($web.AppPath)/" -replace ' ', '+'
+$inner = @(if ($web.AppPath) { Get-WebApplication -Site $web.name | Where-Object { $_.path.StartsWith("$($web.AppPath)/", 'OrdinalIgnoreCase') } | ForEach-Object { "$($_.path)/" -replace ' ', '+' } })
 $central = Get-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter system.applicationHost/log -Name centralLogFileMode
 if ($central -ne 'Site') { throw "IIS on this server writes one log for all sites (centralLogFileMode $central); aca logs reads per-site logs only" }
 if ($web.logFile.logFormat -ne 'W3C') { throw "Site $name writes $($web.logFile.logFormat) logs; aca logs reads W3C logs only" }
@@ -33,11 +36,13 @@ foreach ($f in $files) {
   # 正在写的日志：要允许 HTTP.sys 接着写
   $reader = New-Object IO.StreamReader([IO.File]::Open($f.FullName, 'Open', 'Read', 'ReadWrite, Delete'), [Text.Encoding]::UTF8)
   try {
-    while ($null -ne ($line = $reader.ReadLine())) {
+    :read while ($null -ne ($line = $reader.ReadLine())) {
       if ($line.StartsWith('#')) {
         if ($line.StartsWith('#Fields:')) {
           if (($since -or $until) -and -not $line.StartsWith('#Fields: date time ')) { throw "$($f.FullName) does not start its lines with date and time, so aca logs cannot pick them by time: $line" }
           $fields = $line
+          $uri = [array]::IndexOf($line.Substring(9).Split(' '), 'cs-uri-stem')
+          if ($web.AppPath -and $uri -lt 0) { throw "$($f.FullName) does not log cs-uri-stem, so aca logs cannot pick the requests of ${name}: $line" }
         }
         continue
       }
@@ -45,6 +50,11 @@ foreach ($f in $files) {
       # 日志里的时间是 UTC，$since、$until 在本机换算好了，和行首的 date time 按字符比
       if ($since -and [string]::CompareOrdinal($line, 0, $since, 0, 19) -lt 0) { continue }
       if ($until -and [string]::CompareOrdinal($line, 0, $until, 0, 19) -gt 0) { break }
+      if ($web.AppPath) {
+        $u = $line.Split(' ')[$uri] + '/'
+        if (-not $u.StartsWith($appPrefix, 'OrdinalIgnoreCase')) { continue }
+        foreach ($i in $inner) { if ($u.StartsWith($i, 'OrdinalIgnoreCase')) { continue read } }
+      }
       $lines.Enqueue($line)
       $heads.Enqueue($fields)
       if ($lines.Count -gt $left) { [void]$lines.Dequeue(); [void]$heads.Dequeue() }

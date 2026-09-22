@@ -11,6 +11,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $web = if ($dir) { $null } else { Get-AcaSite $name }
 $root = if ($dir) { Get-AcaServiceRoot $name $dir } else { Get-AcaRoot $web }
+$base = Get-AcaBase $web $root
 $label = if ($web) { 'home' } else { 'service' }
 
 # 发布没走到最后一步（别的服务器预检查没过、发布中途失败或被终止）会留下解开的包；没有哪次发布要跑一天，放了一天的都清掉
@@ -36,7 +37,7 @@ try {
   $hidden = @($excluded | Where-Object { -not (Test-AcaEnvConfig $web $_) -and -not (Test-Path -LiteralPath (Join-Path $root $_)) })
   if ($hidden) { "NOTE: new files under excluded paths are not deployed: $(($hidden | Select-Object -First 20) -join ', ')" }
   # 被排除的文件包里那份和上次发布时的不一样，是开发改过它，服务器上那份可能也得跟着改
-  $last = @(Get-AcaBackups $root)[-1]
+  $last = @(Get-AcaBackups $base)[-1]
   $was = if ($last) { (Read-AcaManifest $last.FullName).Excluded } else { @{} }
   $changed = @($excluded | Where-Object { $was[$_] -and $was[$_] -ne (Get-AcaFileHash (Join-Path $new $_)) })
   if ($changed) { "NOTE: excluded files changed in the package since the last deploy, the server's copies may need the same change: $(($changed | Select-Object -First 20) -join ', ')" }

@@ -1,6 +1,6 @@
 import { type Config, getTarget } from './config.ts';
 import { Ecs, inParallel, type RunResult } from './ecs.ts';
-import { renderScript } from './ps.ts';
+import { renderScript, targetLibs } from './ps.ts';
 
 /** 每个站点和服务在每台服务器上一行：目标、服务器、状态、最新文件的时间、最后一条发布或回退记录；查不了的，状态是 ERROR: 原因 */
 export async function overview(cfg: Config): Promise<string[][]> {
@@ -16,7 +16,7 @@ export async function overview(cfg: Config): Promise<string[][]> {
   const instances = [...onServer.keys()];
   // 一台服务器查不了（比如关着机）不耽误看别的
   const results = await inParallel(cfg, instances, (instance) => (
-    ecs.runPowerShell(instance, renderScript('overview', { TARGETS: onServer.get(instance)!.map((t) => t.line).join('\n') }, ['target', 'newest']), 300).catch((e: Error) => e)
+    ecs.runPowerShell(instance, renderScript('overview', { TARGETS: onServer.get(instance)!.map((t) => t.line).join('\n') }, [...targetLibs(...onServer.get(instance)!.map((t) => t.name)), 'inspect', 'newest']), 300).catch((e: Error) => e)
   ));
   const lookups = new Map(instances.map((instance, i) => [instance, lookup(results[i])]));
   return targets.flatMap((t) => t.instances.map((instance) => [t.name, instance, ...lookups.get(instance)!(onServer.get(instance)!.indexOf(t))]));

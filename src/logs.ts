@@ -2,7 +2,7 @@ import { text } from 'node:stream/consumers';
 import { type Config, getSite } from './config.ts';
 import { Ecs, inParallel, type RunResult } from './ecs.ts';
 import { viaOss } from './oss.ts';
-import { renderScript } from './ps.ts';
+import { renderScript, targetLibs } from './ps.ts';
 
 /** 一天的日志能有上百 MB，时间段在文件末尾时要从头读完 */
 const TIMEOUT = 600;
@@ -24,7 +24,7 @@ export async function readLogs(cfg: Config, site: string, { tail, since, until }
         cfg,
         'logs',
         TIMEOUT,
-        (oss) => ecs.runPowerShell(instance, renderScript('logs', { ...vars, ...oss }, ['target', 'upload']), TIMEOUT),
+        (oss) => ecs.runPowerShell(instance, renderScript('logs', { ...vars, ...oss }, [...targetLibs(site), 'upload']), TIMEOUT),
         text,
       );
       return { instance, result, lines: got };

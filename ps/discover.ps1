@@ -4,19 +4,24 @@ function Format-AcaNewest($web, $root) {
   $f = Get-AcaNewestFile $web $root
   if ($f) { $f.LastWriteTime.ToString('yyyy-MM-dd HH:mm') }
 }
+# $item 是站点或站点下的应用：目录、应用池看它，状态、绑定看站点
+function Out-AcaSite($name, $web, $item) {
+  try {
+    $root = Get-AcaRoot $item
+    $pool = Get-Item -LiteralPath "IIS:\AppPools\$($item.applicationPool)"
+    $state = if ($web.State -ne 'Started') { $web.State } elseif ($pool.state -ne 'Started') { "Started, app pool $($pool.state)" } else { 'Started' }
+    $runtime = if ($pool.managedRuntimeVersion) { $pool.managedRuntimeVersion } else { 'no managed code' }
+    $bindings = @($web.bindings.Collection | ForEach-Object { "$($_.protocol)/$($_.bindingInformation)" })
+    # 绑定多的站点一行能有上千字符，几十个站点就会撑破云助手的输出上限
+    $more = if ($bindings.Count -gt 3) { " (+$($bindings.Count - 3) more)" }
+    Out-AcaRow site $name $state $root (Format-AcaNewest $web $root) "app pool $($pool.name), $(if ($pool.enable32BitAppOnWin64) { 32 } else { 64 })-bit, $runtime; $(($bindings | Select-Object -First 3) -join ' ')$more" ($state -eq 'Started')
+  } catch { Out-AcaRow site $name "ERROR: $($_.Exception.Message)" }
+}
 # 没装 IIS 的服务器（如数据库服务器）上只有服务
 if (Get-Command Get-Website -ErrorAction SilentlyContinue) {
   foreach ($web in @(Get-Website)) {
-    try {
-      $root = Get-AcaRoot $web
-      $pool = Get-Item -LiteralPath "IIS:\AppPools\$($web.applicationPool)"
-      $state = if ($web.State -ne 'Started') { $web.State } elseif ($pool.state -ne 'Started') { "Started, app pool $($pool.state)" } else { 'Started' }
-      $runtime = if ($pool.managedRuntimeVersion) { $pool.managedRuntimeVersion } else { 'no managed code' }
-      $bindings = @($web.bindings.Collection | ForEach-Object { "$($_.protocol)/$($_.bindingInformation)" })
-      # 绑定多的站点一行能有上千字符，几十个站点就会撑破云助手的输出上限
-      $more = if ($bindings.Count -gt 3) { " (+$($bindings.Count - 3) more)" }
-      Out-AcaRow site $web.name $state $root (Format-AcaNewest $web $root) "app pool $($pool.name), $(if ($pool.enable32BitAppOnWin64) { 32 } else { 64 })-bit, $runtime; $(($bindings | Select-Object -First 3) -join ' ')$more" ($state -eq 'Started')
-    } catch { Out-AcaRow site $web.name "ERROR: $($_.Exception.Message)" }
+    Out-AcaSite $web.name $web $web
+    foreach ($a in @(Get-WebApplication -Site $web.name)) { Out-AcaSite "$($web.name)$($a.path)" $web $a }
   }
 }
 # 系统、Program Files、ProgramData 里的是 Windows 自己的和装上的软件（云助手客户端、杀毒、数据库），不是自己发布的程序，不列

@@ -3,11 +3,12 @@ $name = '__NAME__'
 $dir = '__DIR__'
 $web = if ($dir) { $null } else { Get-AcaSite $name }
 $root = if ($dir) { Get-AcaServiceRoot $name $dir } else { Get-AcaRoot $web }
+$base = Get-AcaBase $web $root
 $label = if ($web) { 'home' } else { 'service' }
 
-$lock = Lock-Aca $root
+$locks = @(Lock-AcaTarget $web $base)
 try {
-  $steps = @(Get-AcaBackups $root | Select-Object -Last $deploys.Count | ForEach-Object {
+  $steps = @(Get-AcaBackups $base | Select-Object -Last $deploys.Count | ForEach-Object {
     $m = Read-AcaManifest $_.FullName
     New-Object psobject -Property @{ Backup = $_.FullName; Id = $m.Id; Added = $m.Added }
   })
@@ -33,28 +34,28 @@ try {
       if ($step.Backup -ne $steps[-1].Backup) {
         # 弃不掉就停在这一份：留着它接着退更早的，下次回退会拿它把文件盖回较新的版本
         Move-AcaBackupToTrash $step.Backup
-        Add-AcaLog $root "rollback $($step.Id) | $counts"
+        Add-AcaLog $base "rollback $($step.Id) | $counts"
       }
     }
   } catch {
-    Add-AcaLog $root "rollback $($step.Id) failed | $($_.Exception.Message)"
+    Add-AcaLog $base "rollback $($step.Id) failed | $($_.Exception.Message)"
     throw
   } finally {
     $startErr = if ($wasRunning) { Start-AcaTarget $web $name } else { '' }
   }
   if ($startErr) {
-    Add-AcaLog $root "rollback $($step.Id) files restored but start failed | $startErr"
+    Add-AcaLog $base "rollback $($step.Id) files restored but start failed | $startErr"
     throw "Files restored, but $startErr"
   }
   # 回退到的那一版本来是否健康无从对照，状态只报告不判失败，少探几次给云助手 600 秒留余量
   $after = Get-AcaHealth $web $name 2
-  Add-AcaLog $root "rollback $($step.Id) | $counts | $label $after"
+  Add-AcaLog $base "rollback $($step.Id) | $counts | $label $after"
   # 备份用过即弃，再次回退就会退到更早一次发布；最后这份弃不掉只是下次会重复同样的恢复，不算失败
   try { Move-AcaBackupToTrash $step.Backup } catch { "WARN: backup directory not removed, the next rollback will repeat this one: $($_.Exception.Message)" }
-  Clear-AcaTrash $root
+  Clear-AcaTrash $base
   # 回退前在跑、回退后没起来，就是退到的这一版也起不来：报错让别的服务器先停下，别都退成这一版
   if ($wasRunning -and -not $web -and $after -ne 'Running') { throw "Files restored, but service ${after}: the version rolled back to does not start either, and the service is left stopped on this server; look into it here before rolling back again" }
   "OK: $name rolled back to before deploy $($step.Id), $label $after"
 } finally {
-  $lock.Close()
+  foreach ($l in $locks) { $l.Close() }
 }

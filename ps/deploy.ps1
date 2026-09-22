@@ -10,17 +10,18 @@ $exclude = @('__EXCLUDE__' -split "`n" | Where-Object { $_ })
 
 $web = if ($dir) { $null } else { Get-AcaSite $name }
 $root = if ($dir) { Get-AcaServiceRoot $name $dir } else { Get-AcaRoot $web }
+$base = Get-AcaBase $web $root
 $label = if ($web) { 'home' } else { 'service' }
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $work = Join-Path $env:TEMP '__WORK__'
 $new = Join-Path $work 'new'
-$backup = "$root.bak-$stamp"
+$backup = "$base.bak-$stamp"
 $manifest = Join-Path $backup 'aca-manifest.txt'
-$lock = $null
+$locks = @()
 
 try {
   # 先加锁：后面算的"新增文件"和备份清单都依赖目标目录此刻的样子，中途被别的发布改了就错了
-  $lock = Lock-Aca $root
+  $locks = @(Lock-AcaTarget $web $base)
   if (-not (Test-Path -LiteralPath $new)) { throw "The package unpacked by the pre-check is gone ($new); deploy again" }
   $all = @(Get-ChildItem -LiteralPath $new -Recurse -File)
   $files = @($all | Where-Object { -not (Test-AcaExcluded $_.FullName.Substring($new.Length + 1) $exclude) })
@@ -35,7 +36,7 @@ try {
     if ((Get-AcaHash ([IO.File]::ReadAllBytes((Join-Path $root $c.Name)))) -ne (Get-Content -LiteralPath "$($c.FullName).base")) { throw "$($c.Name) on the server changed after the pre-check; deploy again" }
   }
   # 包里被排除的文件记下哈希，下次预检查拿来比；这次包里没带的沿用上次记的
-  $last = @(Get-AcaBackups $root)[-1]
+  $last = @(Get-AcaBackups $base)[-1]
   $hashes = if ($last) { (Read-AcaManifest $last.FullName).Excluded } else { @{} }
   foreach ($f in @($all | Where-Object { Test-AcaExcluded $_.FullName.Substring($new.Length + 1) $exclude })) { $hashes[$f.FullName.Substring($new.Length + 1)] = Get-AcaFileHash $f.FullName }
   # 发布前的状态留着对照：发布后坏了才知道是这次包的问题还是本来就坏
@@ -59,26 +60,26 @@ try {
   } catch {
     # 还没写清单就是还没开始覆盖，目录没动过，半截的备份没用；先删它，磁盘满时写日志才有空间
     if (-not (Test-Path -LiteralPath $manifest)) { Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue }
-    Add-AcaLog $root "deploy $deployId failed | $($_.Exception.Message) | $message"
+    Add-AcaLog $base "deploy $deployId failed | $($_.Exception.Message) | $message"
     throw
   } finally {
     $startErr = if ($wasRunning) { Start-AcaTarget $web $name } else { '' }
   }
   if ($startErr) {
-    Add-AcaLog $root "deploy $deployId files overwritten but start failed | $startErr | $message"
+    Add-AcaLog $base "deploy $deployId files overwritten but start failed | $startErr | $message"
     throw "Files overwritten, but $startErr"
   }
   $after = Get-AcaHealth $web $name 3
   $healthText = "$label $after (before: $before)"
   if (Test-AcaHealthBroken $web $after $before) {
-    Add-AcaLog $root "deploy $deployId files overwritten, but $healthText | $message"
+    Add-AcaLog $base "deploy $deployId files overwritten, but $healthText | $message"
     throw "Files overwritten, but $healthText; if this deploy broke it, undo it with aca rollback"
   }
   # 成功行的格式被 deploy.ts 的 assertStaged 解析，改格式两边一起改
-  Add-AcaLog $root "deploy $deployId | pkg=$package | sha256=$sha256 | overwrote $($rels.Count - $added.Count) added $($added.Count) | $healthText | $message"
-  Remove-AcaOldBackups $root $backup $keep
+  Add-AcaLog $base "deploy $deployId | pkg=$package | sha256=$sha256 | overwrote $($rels.Count - $added.Count) added $($added.Count) | $healthText | $message"
+  Remove-AcaOldBackups $base $backup $keep
   "OK: $name -> $root  $healthText  (backup: $backup)"
 } finally {
-  if ($lock) { $lock.Close() }
+  foreach ($l in $locks) { $l.Close() }
   Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 }

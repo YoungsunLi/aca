@@ -59,7 +59,7 @@ aca skill install  # 给 Claude Code、Codex 装上 skill，升级 aca 后再跑
 }
 ```
 
-`sites` 的 key 是 IIS 站点名，`deploy`、`rollback`、`status` 只认这里登记的站点和下面 `services` 里登记的服务。除 `instances` 外的字段都可选：
+`sites` 的 key 是 IIS 站点名，站点下的应用程序写成 `站点名/路径`（见下面的"站点下的应用程序"）；`deploy`、`rollback`、`status` 只认这里登记的站点和下面 `services` 里登记的服务。除 `instances` 外的字段都可选：
 
 | 字段 | 说明 |
 | --- | --- |
@@ -73,6 +73,15 @@ aca skill install  # 给 Claude Code、Codex 装上 skill，升级 aca 后再跑
 | `project`<br>`note` | 只在 `aca sites`、`aca services` 里显示，方便认出是哪个站点或服务 |
 
 `services` 的 key 是 Windows 服务名（`sc query` 列出的那个，不是显示名），字段和站点相同，但没有 `stage` 和 `clb`，另外必填 `dir`：服务器上的安装目录；aca 核对服务的可执行文件确实在这个目录里，对不上就不发。
+
+### 站点下的应用程序
+
+IIS 里挂在站点下的应用程序（IIS 管理器里"添加应用程序"建的）写成 `站点名/路径`，如 `Default Web Site/api`，登记在 `sites` 里，字段和站点相同。和站点不一样的地方：
+
+- **停的只是应用自己的应用池**，站点照常服务别的应用；应用池和站点或别的应用共用时，预检查会列出一起中断的那些。
+- **首页检查请求 `/<路径>/`**，`aca logs` 只取这个路径下的请求。
+- **应用目录在站点目录、同站点别的应用或虚拟目录的目录里时，备份和发布记录放在包着它的最外层那个目录旁边**，即 `<那个目录>.aca-apps\<相对路径>` 下：放在应用目录旁边就落进了别的目录，会被 IIS 对外提供。站点本身也要发布时，把应用目录列进站点的 `exclude`，`aca diff` 比站点时就不会把应用的文件也比进去。
+- **发应用时连它所在的站点一起占着租约和服务器本机的锁**：发站点要停站点，站点下的应用也跟着停。
 
 ### 凭证和权限
 
@@ -88,7 +97,7 @@ aca skill install  # 给 Claude Code、Codex 装上 skill，升级 aca 后再跑
 - **ECS 与 OSS bucket 同地域**，发布包走 OSS 内网下载。
 - **服务器需装有[云助手客户端](https://help.aliyun.com/zh/ecs/user-guide/install-the-cloud-assistant-agent#775c8cd747xcj)**（2017 年 12 月以来用公共镜像创建的服务器已预装）。
 - **云助手按服务器的系统代码页回传输出**，英文版等非中文 Windows 上站点名、路径和 `-m` 说明里的中文会变成问号。
-- **站点目录和服务目录必须是本地盘上的普通目录**，不能是盘符根或 UNC 路径，也不要嵌套在另一个目标的目录里：备份和发布记录放在它旁边。
+- **站点目录和服务目录必须是本地盘上的普通目录**，不能是盘符根或 UNC 路径，也不要嵌套在另一个目标的目录里（站点下的应用程序除外，见"站点下的应用程序"）：备份和发布记录放在它旁边。
 - **目录旁的 `<root>.bak-<时间>` 备份和 `<root>.aca-*` 文件是 aca 的状态，别手动删**：删了最新的备份，`rollback` 会跳过那次发布，恢复出一个从没发布过的混合版本。
 - **发布完成后站点和应用池会被启动**，即使发布前是手动停掉的；服务相反，发布前就停着的发布后也不启动：备机上的服务常常是刻意停着的。
 - **本机和服务器要在同一时区**：包里的文件时间按本地时间存，"比服务器旧"的判断靠它。
@@ -111,6 +120,7 @@ aca deploy "Default Web Site" ./publish --check # 只预检查，打印将覆盖
 aca deploy "Default Web Site" ./publish -m "release-2026-09"  # 目录或 zip；-m 写进发布记录
 aca deploy "Default Web Site" --from-stage -m "release-2026-09"  # 直接发预发布站最近一次发布的那个包
 aca deploy MyApp.Worker ./publish -m "release-2026-09"  # 发 Windows 服务，参数和站点一样
+aca deploy "Default Web Site/api" ./api -m "release-2026-09"  # 发站点下的应用程序
 aca status "Default Web Site"                   # 每台服务器上最新的文件时间、服务的运行状态和最近 5 条发布/回退记录
 aca status                                      # 每个站点和服务在每台服务器上一行：状态、最新文件时间、最后一条发布/回退记录
 aca diff "Default Web Site"                     # 按内容哈希比对每台服务器上的文件，列出不一样的

@@ -1,12 +1,17 @@
+# 站点下的应用连站点的锁一起拿：发站点要停站点，站点下的应用跟着停。调用方在 finally 里逐个 Close
+function Lock-AcaTarget($web, $base) {
+  if ($web.SiteRoot) { Lock-Aca $web.SiteRoot }
+  Lock-Aca $base
+}
 # 只留最近 $keep 份备份，$backup 是刚做的那份
-function Remove-AcaOldBackups($root, $backup, $keep) {
+function Remove-AcaOldBackups($base, $backup, $keep) {
   # 刚做的这份单独留着：服务器时间往回调过的话，按名字排它不一定在最后
-  $baks = @(Get-AcaBackups $root | Where-Object { $_.FullName -ne $backup })
+  $baks = @(Get-AcaBackups $base | Where-Object { $_.FullName -ne $backup })
   for ($i = 0; $i -lt $baks.Count - ($keep - 1); $i++) {
     $b = $baks[$i]
     try {
       # 回退计划靠它分辨某台服务器缺的备份是被清理了，还是这台服务器没参与那次发布；只追加，写的时候被杀也丢不了之前的记录
-      Add-Content -LiteralPath "$root.aca-pruned" -Value (Read-AcaManifest $b.FullName).Id
+      Add-Content -LiteralPath "$base.aca-pruned" -Value (Read-AcaManifest $b.FullName).Id
       Move-AcaBackupToTrash $b.FullName
       "Removed old backup $($b.FullName)"
     } catch {
@@ -15,15 +20,15 @@ function Remove-AcaOldBackups($root, $backup, $keep) {
       break
     }
   }
-  Clear-AcaTrash $root
+  Clear-AcaTrash $base
 }
 # 改名是原子的：改完就不再是备份，后面删到一半失败也不会被拿去回退
 function Move-AcaBackupToTrash($backup) {
   Rename-Item -LiteralPath $backup -NewName ((Split-Path $backup -Leaf) -replace '\.bak-(?=[^.]*$)', '.trash-')
 }
 # 这次改名的和以前没删干净的一起删；清单留到最后，删到一半失败时下次还认得出是 aca 的
-function Clear-AcaTrash($root) {
-  Get-AcaBackups $root 'trash' | ForEach-Object {
+function Clear-AcaTrash($base) {
+  Get-AcaBackups $base 'trash' | ForEach-Object {
     $d = $_.FullName
     try {
       Get-ChildItem -LiteralPath $d -Force | Where-Object { $_.Name -ne 'aca-manifest.txt' } | Remove-Item -Recurse -Force
@@ -51,7 +56,8 @@ function Stop-AcaTarget($web, $name) {
   }
   # clb.ts 靠这一行判断失败时停没停过站：停过的服务器留在负载均衡外
   "Stopping site $name"
-  if ($web.State -ne 'Stopped') { Stop-Website -Name $name }
+  # 应用单独停不了，只停它的应用池，站点照常服务别的应用
+  if (-not $web.AppPath -and $web.State -ne 'Stopped') { Stop-Website -Name $name }
   $pool = $web.applicationPool
   if ((Get-WebAppPoolState -Name $pool).Value -ne 'Stopped') { Stop-WebAppPool -Name $pool }
   for ($i = 0; (Get-WebAppPoolState -Name $pool).Value -ne 'Stopped'; $i++) {
@@ -72,14 +78,14 @@ function Start-AcaTarget($web, $name) {
   }
   $errs = @()
   try { Start-WebAppPool -Name $web.applicationPool } catch { $errs += "failed to start app pool: $($_.Exception.Message)" }
-  try { Start-Website -Name $name } catch { $errs += "failed to start site: $($_.Exception.Message)" }
+  if (-not $web.AppPath) { try { Start-Website -Name $name } catch { $errs += "failed to start site: $($_.Exception.Message)" } }
   $errs -join '; '
 }
 # 有的站首页本来就是 500（如只有 API 的站），发布前后一样就不算这次发布弄坏的
 function Test-AcaHealthBroken($web, $health, $before) {
   if ($web) { ($health -eq 'unreachable' -or $health -match '^5\d\d$') -and $health -ne $before } else { $health -ne $before }
 }
-# 部署的文件本身不带版本号，目录旁的 <root>.aca-log.txt 是"当前是哪个版本"的唯一记录
-function Add-AcaLog($root, $text) {
-  Add-Content -LiteralPath "$root.aca-log.txt" -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' | ' + $text) -Encoding UTF8
+# 部署的文件本身不带版本号，<base>.aca-log.txt 是"当前是哪个版本"的唯一记录
+function Add-AcaLog($base, $text) {
+  Add-Content -LiteralPath "$base.aca-log.txt" -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' | ' + $text) -Encoding UTF8
 }

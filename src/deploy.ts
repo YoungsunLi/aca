@@ -10,7 +10,7 @@ import { type Config, getSite, getTarget, targetVars } from './config.ts';
 import { Ecs, inParallel, type RunResult } from './ecs.ts';
 import { targetLease } from './lease.ts';
 import { exists, policyIsPublic, readableWithoutCredentials, signForEcs, upload } from './oss.ts';
-import { renderScript } from './ps.ts';
+import { renderScript, targetLibs } from './ps.ts';
 
 export type DeployOptions = { check?: boolean; message?: string; force?: boolean; skipStage?: boolean; fromStage?: boolean };
 type Package = { id: string; sha256: string };
@@ -59,9 +59,9 @@ export async function* deploy(cfg: Config, name: string, path: string | undefine
     const timeout = 1800;
     const vars = { ...targetVars(name, target), WORK: `aca-${deployId}-${randomBytes(4).toString('hex')}`, DEPLOY_ID: deployId, SHA256: pkg.sha256, EXCLUDE: exclude.join('\n'), FORCE: String(force) };
     // 先查完每台服务器再动手：发到一半才发现后面的服务器过不了预检查，负载均衡后面就是新旧两个版本
-    const checkScript = renderScript('check', { ...vars, URL: await signForEcs(cfg, object, timeout), CHECK_ONLY: String(check) }, ['target', 'inspect', 'tls']);
+    const checkScript = renderScript('check', { ...vars, URL: await signForEcs(cfg, object, timeout), CHECK_ONLY: String(check) }, [...targetLibs(name), 'inspect', 'tls']);
     // 分析解开的包各自一条命令：和预检查放在一起，连同签名 URL 会超出 RunCommand 的 24 KB
-    const scripts = [checkScript, renderScript('analyze', { ...vars, OVERWRITE_CONFIG: String(overwriteConfig) }, ['target', 'config']), renderScript('refs', { ...vars, CHECK_ONLY: String(check) }, ['target'])];
+    const scripts = [checkScript, renderScript('analyze', { ...vars, OVERWRITE_CONFIG: String(overwriteConfig) }, [...targetLibs(name), 'config']), renderScript('refs', { ...vars, CHECK_ONLY: String(check) }, targetLibs(name))];
     const checks = await inParallel(cfg, instances, async (instance): Promise<[string, RunResult]> => {
       let r = await ecs.runPowerShell(instance, scripts[0], timeout);
       for (const script of scripts.slice(1)) {
@@ -75,7 +75,7 @@ export async function* deploy(cfg: Config, name: string, path: string | undefine
     if (check) return;
     const failed = checks.filter(([, r]) => r.status !== 'Success').map(([instance]) => instance);
     if (failed.length) throw new Error(`Pre-check failed on ${failed.join(', ')}; no server was deployed`);
-    const script = renderScript('deploy', { ...vars, PACKAGE: pkg.id, MESSAGE: message, KEEP: String(keep) }, ['target', 'inspect', 'release', 'tls']);
+    const script = renderScript('deploy', { ...vars, PACKAGE: pkg.id, MESSAGE: message, KEEP: String(keep) }, [...targetLibs(name), 'inspect', 'release', 'tls']);
     for (const [i, instance] of instances.entries()) {
       held?.check();
       const r = yield* outOfClb(clb, held, instance, () => ecs.runPowerShell(instance, script, timeout));
@@ -112,7 +112,7 @@ async function uploadLocal(cfg: Config, ecs: Ecs, path: string, exclude: string[
 async function assertStaged(cfg: Config, ecs: Ecs, stage: string, id?: string): Promise<Package> {
   let staged: Package | undefined;
   for (const name of getSite(cfg, stage).instances) {
-    const r = await ecs.runPowerShell(name, renderScript('lastdeploy', { SITE: stage }, ['target']), 60);
+    const r = await ecs.runPowerShell(name, renderScript('lastdeploy', { SITE: stage }, [...targetLibs(stage), 'inspect']), 60);
     if (r.status !== 'Success') throw new Error(`Failed to read the deploy log of stage site ${stage} (${name}): ${r.output.trim() || r.error}`);
     const last = r.output.trim();
     const m = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \| deploy \S+ \| pkg=([0-9a-f]+) \| sha256=([0-9a-f]{64}) \| /.exec(last);

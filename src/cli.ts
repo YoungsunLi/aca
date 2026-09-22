@@ -14,7 +14,7 @@ import { type Assistant, Ecs, type RunResult } from './ecs.ts';
 import { targetLease } from './lease.ts';
 import { type LogOptions, readLogs } from './logs.ts';
 import { overview } from './overview.ts';
-import { renderScript } from './ps.ts';
+import { renderScript, targetLibs } from './ps.ts';
 import { pull } from './pull.ts';
 import { planRollback, printPlan, rollback } from './rollback.ts';
 
@@ -111,7 +111,7 @@ program.command('status [target]').description('Show what each server is running
     const ecs = new Ecs(cfg);
     for (const instance of target.instances) {
       console.log(`== ${instance}`);
-      report(await ecs.runPowerShell(instance, renderScript('status', targetVars(name, target), ['target', 'newest']), 120));
+      report(await ecs.runPowerShell(instance, renderScript('status', targetVars(name, target), [...targetLibs(name), 'inspect', 'newest']), 120));
     }
   });
 

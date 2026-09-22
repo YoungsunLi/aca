@@ -12,7 +12,7 @@ for ($i = 0; $i -lt $targets.Count; $i++) {
       if ($pool -eq 'Started') { 'Started' } else { "Started, app pool $pool" }
     }
     $newest = Get-AcaNewestFile $web $root
-    $log = "$root.aca-log.txt"
+    $log = "$(Get-AcaBase $web $root).aca-log.txt"
     $last = if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log | Select-Object -Last 1 }
     # 按 tab 分列、按换行分行：-m 里写得进 tab，异常信息里可能有换行
     "$i`t$state`t$(if ($newest) { $newest.LastWriteTime.ToString('yyyy-MM-dd HH:mm') })`t$($last -replace "`t", ' ')"

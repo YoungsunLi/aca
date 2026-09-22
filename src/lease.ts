@@ -28,9 +28,12 @@ export type Lease = { check(): void; release(): Promise<void> };
 export async function targetLease(cfg: Config, name: string, what: string): Promise<Lease> {
   const held: Lease[] = [];
   try {
-    // 先目标后 CLB，顺序固定：两个 aca 各拿到一个再互等就是死锁
+    // 先站点、再应用、最后 CLB，顺序固定：两个 aca 各拿到一个再互等就是死锁
     // 统一小写：IIS 站点名和服务名都不分大小写，两份配置写成 App 和 app 就会各拿各的租约
     const target = getTarget(cfg, name);
+    // 停站点会连带停掉站点下的应用，发应用时连站点一起占着
+    const site = name.split('/')[0];
+    if (target.kind === 'site' && site !== name) held.push(await acquire(cfg, `site/${encodeURIComponent(site.toLowerCase())}`, what));
     held.push(await acquire(cfg, `${target.kind}/${encodeURIComponent(name.toLowerCase())}`, what));
     if (target.kind === 'site' && target.clb) held.push(await acquire(cfg, `clb/${target.clb}`, what));
   } catch (e) {
