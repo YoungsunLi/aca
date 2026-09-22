@@ -36,37 +36,56 @@ function Get-AcaOlderFiles($root, $files, $rels, $added) {
     if ($added -notcontains $rels[$i] -and (Get-Item -LiteralPath (Join-Path $root $rels[$i])).LastWriteTime -gt $files[$i].LastWriteTime.AddMinutes(1)) { $rels[$i] }
   }
 }
-# IIS 起来了不代表应用起来了：在本机按站点的 http 绑定请求首页，优先带域名的绑定。
-# 只走 http：本机访问 https 会撞证书，而关掉证书校验的回调在 PS3 里会连累 OSS 下载。
-# 返回状态码；连不上返回 0，没有 http 绑定返回 -1。0 和 503 可能只是应用池还没起来，最多试 $tries 次；
+# IIS 起来了不代表应用起来了：在本机请求站点的首页，优先 http、优先带域名的绑定。
+# http 跳到本站的 https 绑定时（强制 https 的站点都这样），跳转说明不了应用起没起来，改请求那个绑定。
+# 返回状态码；连不上返回 0，没有 http 和 https 绑定返回 -1。0 和 503 可能只是应用池还没起来，最多试 $tries 次；
 # 单次 60 秒够冷启动编译，调用方按自己的云助手超时决定试几次
 function Get-AcaHomeStatus($web, $tries) {
-  $b = @(Get-WebBinding -Name $web.name -Protocol http | Sort-Object { -not ($_.bindingInformation -split ':')[-1] })[0]
+  $all = @($web.bindings.Collection | Where-Object { 'http', 'https' -contains $_.protocol })
+  $b = @($all | Sort-Object { $_.protocol -ne 'http' }, { -not (Get-AcaBindingHost $_) })[0]
   if (-not $b) { return -1 }
-  $hostName = ($b.bindingInformation -split ':')[-1]
+  $hostName = Get-AcaBindingHost $b
   for ($i = 1; ; $i++) {
-    $req = [Net.WebRequest]::Create((Get-AcaBindingUrl $b.bindingInformation))
-    if ($hostName) { $req.Host = $hostName }
-    $req.AllowAutoRedirect = $false
-    $req.Timeout = 60000
-    try { $resp = $req.GetResponse(); $code = [int]$resp.StatusCode; $resp.Close() } catch {
-      $e = $_.Exception
-      while ($e.InnerException) { $e = $e.InnerException }
-      # 错误响应也占连接，不关掉的话同一地址默认只有两条连接，重试会卡住
-      $code = if ($e.Response) { $c = [int]$e.Response.StatusCode; $e.Response.Close(); $c } else { 0 }
+    $code, $location = Invoke-AcaHome $b $hostName
+    $https = if ($b.protocol -eq 'http' -and $location -match '^https://([^/:?#]+)(?::(\d+))?') {
+      $to = $matches[1]
+      $port = if ($matches[2]) { $matches[2] } else { '443' }
+      $c = @($all | Where-Object { $_.protocol -eq 'https' -and ($_.bindingInformation -split ':')[-2] -eq $port -and ('', $to) -contains (Get-AcaBindingHost $_) } | Sort-Object { -not (Get-AcaBindingHost $_) })[0]
+      # 不带域名的绑定兜着所有域名，可别的站点单独绑了这个域名时，跳过去的是那个站点；本站单独绑了的，上一行已经挑走了
+      if ($c -and ((Get-AcaBindingHost $c) -or -not (Get-WebBinding -Protocol https -Port $port -HostHeader $to))) { $c }
+    }
+    if ($https) {
+      $b, $hostName = $https, $to
+      $code, $location = Invoke-AcaHome $b $hostName
     }
     if (($code -ne 0 -and $code -ne 503) -or $i -ge $tries) { return $code }
     Start-Sleep -Seconds 5
   }
 }
-# bindingInformation 形如 IP:端口:域名，IPv6 的 IP 自带冒号，所以从右往左拆
-function Get-AcaBindingUrl($info) {
-  $parts = $info -split ':'
-  $ip = $parts[0..($parts.Count - 3)] -join ':'
-  if ($ip -eq '*') { $ip = 'localhost' }
-  "http://${ip}:$($parts[-2])/"
+function Get-AcaBindingHost($b) { ($b.bindingInformation -split ':')[-1] }
+# 返回状态码（连不上是 0）和跳转的目标。只读状态行和响应头，http、https 走同一条路；
+# https 不校验证书：要看的是应用，证书归 aca certs 查
+function Invoke-AcaHome($b, $hostName) {
+  # bindingInformation 形如 IP:端口:域名，IPv6 的 IP 自带冒号，所以从右往左拆
+  $parts = $b.bindingInformation -split ':'
+  $ip, $port = ($parts[0..($parts.Count - 3)] -join ':'), $parts[-2]
+  # 不带域名的绑定 Host 写地址和非默认端口，和浏览器按这个地址访问时一样
+  $authority = if ($hostName) { $hostName } else { "$(if ($ip -eq '*') { 'localhost' } else { $ip })$(if ($port -ne @{ http = '80'; https = '443' }[$b.protocol]) { ":$port" })" }
+  $ip = if ($ip -eq '*') { '127.0.0.1' } else { $ip.Trim('[]') }
+  $s = $null
+  try {
+    $s = if ($b.protocol -eq 'https') { (Connect-AcaTls $ip $port $hostName).Ssl } else { (New-Object Net.Sockets.TcpClient($ip, [int]$port)).GetStream() }
+    $s.ReadTimeout = 60000
+    $req = [Text.Encoding]::ASCII.GetBytes("GET / HTTP/1.1`r`nHost: $authority`r`nConnection: close`r`n`r`n")
+    $s.Write($req, 0, $req.Length)
+    $r = New-Object IO.StreamReader $s
+    if ($r.ReadLine() -notmatch '^HTTP/\S+ (\d{3})') { return 0 }
+    $code = [int]$matches[1]
+    for ($l = $r.ReadLine(); $l; $l = $r.ReadLine()) { if ($l -match '^Location:\s*(\S+)') { return $code, $matches[1] } }
+    $code
+  } catch { 0 } finally { if ($s) { $s.Close() } }
 }
-function Format-AcaHome($code) { switch ($code) { -1 { 'no http binding' } 0 { 'unreachable' } default { "$code" } } }
+function Format-AcaHome($code) { switch ($code) { -1 { 'no http or https binding' } 0 { 'unreachable' } default { "$code" } } }
 # 服务起来了不代表活着：启动即崩的服务过几秒才在 SCM 里变回 Stopped，所以多看几次
 function Get-AcaHealth($web, $name, $tries) {
   if ($web) { return Format-AcaHome (Get-AcaHomeStatus $web $tries) }

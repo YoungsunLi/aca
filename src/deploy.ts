@@ -59,7 +59,7 @@ export async function* deploy(cfg: Config, name: string, path: string | undefine
     const timeout = 1800;
     const vars = { ...targetVars(name, target), WORK: `aca-${deployId}-${randomBytes(4).toString('hex')}`, DEPLOY_ID: deployId, SHA256: pkg.sha256, EXCLUDE: exclude.join('\n'), FORCE: String(force) };
     // 先查完每台服务器再动手：发到一半才发现后面的服务器过不了预检查，负载均衡后面就是新旧两个版本
-    const checkScript = renderScript('check', { ...vars, URL: await signForEcs(cfg, object, timeout), CHECK_ONLY: String(check) }, ['target', 'inspect']);
+    const checkScript = renderScript('check', { ...vars, URL: await signForEcs(cfg, object, timeout), CHECK_ONLY: String(check) }, ['target', 'inspect', 'tls']);
     // 分析解开的包各自一条命令：和预检查放在一起，连同签名 URL 会超出 RunCommand 的 24 KB
     const scripts = [checkScript, renderScript('analyze', { ...vars, OVERWRITE_CONFIG: String(overwriteConfig) }, ['target', 'config']), renderScript('refs', { ...vars, CHECK_ONLY: String(check) }, ['target'])];
     const checks = await inParallel(cfg, instances, async (instance): Promise<[string, RunResult]> => {
@@ -75,7 +75,7 @@ export async function* deploy(cfg: Config, name: string, path: string | undefine
     if (check) return;
     const failed = checks.filter(([, r]) => r.status !== 'Success').map(([instance]) => instance);
     if (failed.length) throw new Error(`Pre-check failed on ${failed.join(', ')}; no server was deployed`);
-    const script = renderScript('deploy', { ...vars, PACKAGE: pkg.id, MESSAGE: message, KEEP: String(keep) }, ['target', 'inspect', 'release']);
+    const script = renderScript('deploy', { ...vars, PACKAGE: pkg.id, MESSAGE: message, KEEP: String(keep) }, ['target', 'inspect', 'release', 'tls']);
     for (const [i, instance] of instances.entries()) {
       held?.check();
       const r = yield* outOfClb(clb, held, instance, () => ecs.runPowerShell(instance, script, timeout));

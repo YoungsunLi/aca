@@ -102,6 +102,12 @@ $acaReleases = [ordered]@{ '4.5' = 378389; '4.5.1' = 378675; '4.5.2' = 379893; '
 
 $web = if ($dir) { $null } else { Get-AcaSite $name }
 $root = if ($dir) { Get-AcaServiceRoot $name $dir } else { Get-AcaRoot $web }
+# 放在这里而不在 check：check 带着签名 URL，离 RunCommand 的 24 KB 最近
+if ($web) {
+  $pool = $web.applicationPool
+  $shared = @(Get-Website | Where-Object { $_.name -ne $name -and $_.applicationPool -eq $pool } | ForEach-Object name)
+  if ($shared) { "NOTE: app pool $pool is shared with site(s) $($shared -join ', '), which will also be down for a few seconds" }
+}
 $passed = $false
 try {
   # 运行时只在站点的 bin、服务的目录顶层找程序集，子目录里是附属资源或别的进程用的

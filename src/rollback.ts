@@ -68,7 +68,7 @@ export async function* rollback(cfg: Config, name: string, deployId?: string): A
     steps.sort((a, b) => Number(weights?.get(b.name) === 0) - Number(weights?.get(a.name) === 0));
     for (const { name: instance, undo } of steps) {
       held.check();
-      const script = renderScript('rollback', { ...targetVars(name, target), DEPLOYS: undo.map((b) => b.deployId).join('\n') }, ['target', 'inspect', 'release']);
+      const script = renderScript('rollback', { ...targetVars(name, target), DEPLOYS: undo.map((b) => b.deployId).join('\n') }, ['target', 'inspect', 'release', 'tls']);
       const r = yield* outOfClb(clb, held, instance, () => ecs.runPowerShell(instance, script, 600));
       if (r.status !== 'Success') throw new Error(`${instance}: rollback failed`);
     }

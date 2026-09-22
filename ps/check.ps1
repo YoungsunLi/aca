@@ -13,12 +13,6 @@ $web = if ($dir) { $null } else { Get-AcaSite $name }
 $root = if ($dir) { Get-AcaServiceRoot $name $dir } else { Get-AcaRoot $web }
 $label = if ($web) { 'home' } else { 'service' }
 
-if ($web) {
-  $pool = $web.applicationPool
-  $shared = @(Get-Website | Where-Object { $_.name -ne $name -and $_.applicationPool -eq $pool } | ForEach-Object name)
-  if ($shared) { "NOTE: app pool $pool is shared with site(s) $($shared -join ', '), which will also be down for a few seconds" }
-}
-
 # 发布没走到最后一步（别的服务器预检查没过、发布中途失败或被终止）会留下解开的包；没有哪次发布要跑一天，放了一天的都清掉
 Get-ChildItem -LiteralPath $env:TEMP -Directory -Filter 'aca-*' |
   Where-Object { $_.Name -match '^aca-\d{8}T\d{6}Z-[0-9a-f]{8}$' -and $_.LastWriteTime -lt (Get-Date).AddDays(-1) } |

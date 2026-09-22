@@ -23,7 +23,7 @@ export async function checkCerts(cfg: Config): Promise<{ checks: CertCheck[]; fa
   const failures: string[] = [];
   // 逐台查而不并发：SDK 默认凭证链首次取凭证时并发调用，会有调用拿到链上还没试通的那一环而报错
   for (const instance of certInstances(cfg)) {
-    const r = await ecs.runPowerShell(instance, renderScript('certs', {}, ['certcommon']), 300);
+    const r = await ecs.runPowerShell(instance, renderScript('certs', {}, ['tls', 'certcommon']), 300);
     if (r.status !== 'Success') {
       failures.push(`${instance}: ${r.output.trim() || r.error}`);
       continue;
@@ -78,7 +78,7 @@ export async function* replaceCert(cfg: Config, source: CertSource, { check = fa
         URL: objectName && await signForEcs(cfg, objectName, 300), KEY: key.toString('base64'),
         PASSWORD: source.kind === 'pfx' ? source.password : '', THUMBPRINT: source.kind === 'thumbprint' ? source.thumbprint : '',
         CHECK_ONLY: String(check), FORCE: String(force), TIMEOUT: String(timeout),
-      }, ['certcommon']);
+      }, ['tls', 'certcommon']);
       const r = await ecs.runPowerShell(name, script, timeout);
       yield [name, r];
       if (r.status !== 'Success') throw new Error(`${name}: ${check ? 'check' : 'replace'} failed, ${instances.length - i - 1} remaining server(s) not processed`);
