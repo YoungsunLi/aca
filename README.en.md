@@ -191,6 +191,7 @@ aca runs any PowerShell on the server as SYSTEM and prints the output when it fi
 - **Use `--file <file>` for a script with `$`, quotes or line breaks**: a script on the command line goes through the local shell first, which may silently change them; the file must be UTF-8.
 - **`-t` kills the script after this many seconds** (default 300).
 - **By default a failing PowerShell command only reports an error** and the exit code stays 0; start the script with `$ErrorActionPreference = 'Stop'` to make any error a failure.
+- **The script can't contain characters outside GBK** (e.g. emoji, ✓, ä); aca refuses to send it: on servers whose system locale is not English (United States), the Cloud Assistant client converts the script to GBK and, if a character doesn't convert, runs an empty script and still reports success.
 - **The script plus the prefix aca adds must fit in 24 KB after base64** (about 18 KB of plain English text); output beyond the Cloud Assistant limit keeps only its beginning and end, and aca reports how many bytes were dropped from the middle, so filter large output in the script; to read a whole file, use `aca pull`.
 - **Change site files with `aca deploy`**: whatever you change with `aca run` has no backup, and `aca rollback` can't undo it.
 

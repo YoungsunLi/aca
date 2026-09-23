@@ -65,6 +65,7 @@ program.command('run <instance> [script]').description('Run PowerShell on a serv
     if (!Number.isInteger(timeout) || timeout <= 0) throw new Error(`--timeout must be a positive integer of seconds, got "${opts.timeout}"`);
     if ((inline === undefined) === (opts.file === undefined)) throw new Error('Give the script either as an argument or with --file');
     const script = inline ?? readUtf8(opts.file!);
+    assertGbk(script);
     // 放进子作用域：否则前缀里兜底的 trap 会抢在用户自己的 trap 之前接住异常
     report(await new Ecs(loadConfig()).runPowerShell(instance, `& {\n${script}\n}`, timeout));
   });
@@ -201,6 +202,21 @@ function readUtf8(file: string): string {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch (e) {
     throw new Error(`${file} is not UTF-8 text`, { cause: e });
+  }
+}
+
+// 系统区域不是英语（美国）的服务器上，云助手客户端把脚本转成 GBK，有一个字符转不了就执行空脚本、照样报成功。
+// GBK 有哪些字符用本机的解码表反推，它比客户端的表多出私用区和十几个很少用的字符，只在这些字符上会漏拦
+function assertGbk(script: string) {
+  const bytes: number[] = [];
+  for (let lead = 0x81; lead <= 0xfe; lead++) for (let trail = 0x40; trail <= 0xfe; trail++) if (trail !== 0x7f) bytes.push(lead, trail);
+  const gbk = new Set(new TextDecoder('gbk').decode(new Uint8Array(bytes)));
+  gbk.delete('\ufffd');
+  for (const [i, line] of script.split('\n').entries()) {
+    const c = [...line].find((ch) => ch > '\x7f' && !gbk.has(ch));
+    if (!c) continue;
+    const hex = c.codePointAt(0)!.toString(16).toUpperCase();
+    throw new Error(`Line ${i + 1} of the script has "${c}" (U+${hex.padStart(4, '0')}), which is not in GBK: on servers whose system locale is not English (United States), Cloud Assistant converts the script to GBK and runs an empty script when a character does not convert. Write it as [char]::ConvertFromUtf32(0x${hex})`);
   }
 }
 
