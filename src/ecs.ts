@@ -12,7 +12,7 @@ export type RunResult = { status: string; exitCode: number | undefined; output: 
 
 /**
  * 服务器脚本逐行输出的记录，末尾一列是这一行前面部分的长度，返回去掉这一列的行。云助手的输出超过上限时保留开头和结尾、
- * 丢掉中间，切口那一行由两截拼成，长度对不上，不收；没被截断时不核对：服务器代码页里没有的字符换成问号后长度可能变
+ * 丢掉中间，切口那一行由两截拼成，长度对不上，不收；没被截断时不核对：GBK 以外的字符换成问号后长度可能变
  */
 export function records(r: RunResult): string[] {
   return r.output.split(/\r?\n/).flatMap((line) => {
@@ -23,9 +23,9 @@ export function records(r: RunResult): string[] {
 
 // Terminated 是在控制台点了"停止执行"
 const TERMINAL_STATUS = new Set(['Success', 'Failed', 'Error', 'Timeout', 'Cancelled', 'Stopped', 'Terminated', 'Invalid', 'Aborted']);
-// Windows 版云助手客户端（实测 2.1.4）按系统 ANSI 代码页解码输出，改成 UTF-8 反而乱码。
+// Windows 版云助手客户端只在系统区域是英语（美国）的服务器上把输出当 UTF-8 原样回传，别的服务器上一律按 GBK 解码，不看系统代码页。
 // PS 3.0（Server 2012）脚本抛错后退出码仍为 0，trap 保证失败时非 0，aca run 的脚本也要靠它
-const PS_PREAMBLE = `[Console]::OutputEncoding = [Text.Encoding]::Default
+const PS_PREAMBLE = `[Console]::OutputEncoding = [Text.Encoding]::GetEncoding((936, 65001)[(Get-WinSystemLocale).LCID -eq 1033])
 trap { 'ERROR: ' + $_.Exception.Message; exit 1 }
 `;
 // 云助手执行记录里只有渲染后的脚本，名称写上 aca 命令行才认得出是哪条命令。

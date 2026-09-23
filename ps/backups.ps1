@@ -6,7 +6,8 @@ $root = if ($dir) { Get-AcaServiceRoot $name $dir } else { Get-AcaRoot $web }
 $base = Get-AcaBase $web $root
 $log = if (Test-Path -LiteralPath "$base.aca-log.txt") { @(Get-Content -LiteralPath "$base.aca-log.txt") } else { @() }
 $ids = @()
-# 回退靠这份列表，输出超过云助手的上限就退不了；记录只是给人看的，给它一个额度，备份太多时较旧的不带
+# 回退靠这份列表，输出超过云助手的上限就退不了；记录只是给人看的，给它一个额度，备份太多时较旧的不带。
+# 额度按 UTF-8 算：云助手客户端把输出转成 UTF-8 之后才按字节数截断
 $room = 12KB
 Get-AcaBackups $base | Sort-Object Name -Descending | ForEach-Object {
   $m = Read-AcaManifest $_.FullName
@@ -14,7 +15,7 @@ Get-AcaBackups $base | Sort-Object Name -Descending | ForEach-Object {
   $files = @(Get-ChildItem -LiteralPath $_.FullName -Recurse -File)
   # 锚定行首：-m 里写一段 | deploy <别的发布 ID> | 也配不到那次发布头上
   $entry = $log | Where-Object { $_ -match ('^[\d-]+ [\d:]+ \| deploy ' + [regex]::Escape($m.Id) + ' ') } | Select-Object -Last 1
-  $room -= [Text.Encoding]::Default.GetByteCount("$entry")
+  $room -= [Text.Encoding]::UTF8.GetByteCount("$entry")
   if ($room -lt 0) { $entry = '' }
   $m.Id + '|' + ($files.Count - 1) + '|' + $m.Added.Count + '|' + ($files | Measure-Object Length -Sum).Sum + '|' + $entry
 }

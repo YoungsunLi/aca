@@ -111,7 +111,7 @@ Credentials are resolved by the Alibaba Cloud SDK's [default credential chain](h
 
 - **ECS and the OSS bucket are in the same region**; packages are downloaded over the OSS internal network.
 - **Servers need the [Cloud Assistant client](https://www.alibabacloud.com/help/en/ecs/user-guide/install-the-cloud-assistant-agent#775c8cd747xcj)** (preinstalled on servers created from public images since December 2017).
-- **Cloud Assistant returns output in the server's ANSI code page**: characters outside it (e.g. Chinese on English Windows) in site names, paths and `-m` notes turn into question marks.
+- **On servers whose system locale is not English (United States), characters outside GBK (e.g. ä, emoji) in the output turn into question marks**: the Cloud Assistant client returns output in GBK there; Chinese is not affected.
 - **A site or service directory must be a plain directory on a local drive**, not a drive root or a UNC path, and not nested inside another target's directory (applications under a site aside, see "Applications under a site"): backups and the deploy log live next to it.
 - **The `<root>.bak-<time>` backups and `<root>.aca-*` files next to that directory are aca's state; don't delete them by hand**: without the latest backup, `rollback` skips that deploy and restores a mix that was never deployed.
 - **After a deploy the site and its app pool are started**, even if they had been stopped by hand; a service is the opposite: one stopped before the deploy is left stopped, since on a standby server a service is often stopped on purpose.
