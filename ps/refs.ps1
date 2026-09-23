@@ -81,6 +81,24 @@ function Get-AcaConfigTargets($x) {
     if ($a.Value -match '(\d+(?:\.\d+)+)$') { "$($a.OwnerElement.LocalName) $($a.LocalName)|$($matches[1])" }
   }
 }
+# 和宿主一样按 SemVer 比较 x.y.z[-预览号]：预览版低于同号的正式版；预览号逐段比，数字段按数值比、低于字母段，前面都相同时段多的高
+function Compare-AcaSemver($a, $b) {
+  $x, $xp = $a -split '-', 2
+  $y, $yp = $b -split '-', 2
+  $c = ([version]$x).CompareTo([version]$y)
+  if ($c -or $xp -ceq $yp) { return $c }
+  if (-not $xp) { return 1 }
+  if (-not $yp) { return -1 }
+  $xs = $xp -split '\.'
+  $ys = $yp -split '\.'
+  for ($i = 0; $i -lt $xs.Count -and $i -lt $ys.Count; $i++) {
+    $p = $xs[$i]
+    $q = $ys[$i]
+    $c = if ($p -match '^\d+$' -and $q -match '^\d+$') { ([long]$p).CompareTo([long]$q) } elseif ($p -match '^\d+$') { -1 } elseif ($q -match '^\d+$') { 1 } else { [string]::CompareOrdinal($p, $q) }
+    if ($c) { return $c }
+  }
+  $xs.Count.CompareTo($ys.Count)
+}
 # runtimeconfig.json 要的共享框架里，服务器上按前滚规则找不到的。只能估计：应用跑在几位上、环境变量里的 DOTNET_ROOT、
 # DOTNET_ROLL_FORWARD 都会改变宿主去哪找、认哪个版本，aca 看不全，所以 32 位、64 位两份 dotnet 有一份装着就算，找不到也只提示
 function Get-AcaMissingFrameworks($path, $dotnets) {
@@ -90,10 +108,13 @@ function Get-AcaMissingFrameworks($path, $dotnets) {
   foreach ($fx in @(@($o.framework) + @($o.frameworks) | Where-Object { $_ })) {
     $policy = @($fx.rollForward, $o.rollForward, $legacy["$($fx.rollForwardOnNoCandidateFx)"], $legacy["$($o.rollForwardOnNoCandidateFx)"], 'Minor' | Where-Object { $_ })[0]
     $want = [version]($fx.version -replace '-.*')
-    # 要的是正式版就不会前滚到预览版
-    $pre = $fx.version -match '-'
-    $have = @(Get-ChildItem -LiteralPath @($dotnets | ForEach-Object { "$_\shared\$($fx.name)" }) -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d+\.\d+\.\d+(-.+)?$' -and ($pre -or -not $matches[1]) } | ForEach-Object { [version]($_.Name -replace '-.*') } | Sort-Object -Unique)
-    $ok = @($have | Where-Object { $_ -ge $want -and $(if ($policy -eq 'Disable') { $_ -eq $want } elseif ($policy -eq 'LatestPatch') { $_.Major -eq $want.Major -and $_.Minor -eq $want.Minor } elseif ($policy -match 'Major$') { $true } else { $_.Major -eq $want.Major }) })
+    # 宿主先挑正式版，没有合用的才用预览版，所以两种都算
+    $have = @(Get-ChildItem -LiteralPath @($dotnets | ForEach-Object { "$_\shared\$($fx.name)" }) -Directory -ErrorAction SilentlyContinue | ForEach-Object Name | Where-Object { $_ -match '^\d+\.\d+\.\d+(-.+)?$' } | Sort-Object { [version]($_ -replace '-.*') }, { $_ } -Unique)
+    $ok = @($have | Where-Object {
+      $v = [version]($_ -replace '-.*')
+      $c = Compare-AcaSemver $_ $fx.version
+      $c -ge 0 -and $(if ($policy -eq 'Disable') { $c -eq 0 } elseif ($policy -eq 'LatestPatch') { $v.Major -eq $want.Major -and $v.Minor -eq $want.Minor } elseif ($policy -match 'Major$') { $true } else { $v.Major -eq $want.Major })
+    })
     if (-not $ok) { "$($fx.name) $($fx.version)$(if ($policy -ne 'Minor') { " (rollForward $policy)" }); this server has $(if ($have) { $have -join ', ' } else { 'none' })" }
   }
 }
