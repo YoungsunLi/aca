@@ -19,7 +19,7 @@ Deploy IIS sites and Windows services to Windows ECS instances automatically, ro
 - **You can roll back a bad deploy**: aca backs up the files every deploy overwrites, and one `aca rollback` can undo several deploys.
 - **See what each server really has**: `aca diff` compares file contents across servers, and `aca certs` shows the certificates actually served.
 - **Replace certificates across servers with `aca certs replace`**: aca does a handshake on the server itself afterwards and switches back to the old certificate if anything is wrong.
-- **Comes with an Agent Skill**: tell Claude Code, Codex or another AI agent "deploy MyApp to the test site", and it runs `--check` first, shows you the result and deploys after you confirm.
+- **Comes with an Agent Skill**: tell Claude Code, Codex or another AI agent "deploy MyApp to the test site", and it runs `--check` first, shows you the result and deploys after you confirm; ask it to "give every server a health check", and it can use `aca run` to find out what fills the disks, whether the databases are being backed up, how long since the last patch, which ports are listening and more.
 
 > [!CAUTION]
 > Cloud Assistant runs as SYSTEM, so `aca run` can run **any** PowerShell on the servers: whoever holds this AccessKey, human or AI agent, is their administrator. The skill tells AI agents to ask you before changing a server; that is a rule for the AI agent to follow, not a permission control.
@@ -187,11 +187,13 @@ aca lists the IIS sites and Windows services on the servers, and ends with a con
 
 aca runs any PowerShell on the server as SYSTEM and prints the output when it finishes; if the script exits non-zero (an uncaught exception included), aca exits with the same code.
 
-- **Handy for ad-hoc operations** such as reading logs, checking disk space or restarting an app pool; the instance can be an alias from the config or any instance ID in the configured region.
+- **Anything PowerShell can do on the server itself, you can do with `aca run`**: for example, find out what fills a disk, check services, processes and listening ports, see how long since the last patch, or restart an app pool. The instance can be an alias from the config or any instance ID in the configured region.
 - **Use `--file <file>` for a script with `$`, quotes or line breaks**: a script on the command line goes through the local shell first, which may silently change them; the file must be UTF-8.
 - **`-t` kills the script, and the processes it started, after this many seconds** (default 300).
 - **By default a failing PowerShell command only reports an error** and the exit code stays 0; start the script with `$ErrorActionPreference = 'Stop'` to make any error a failure.
 - **The script can't contain characters outside GBK** (e.g. emoji, ✓, ä); aca refuses to send it: on servers whose system locale is not English (United States), the Cloud Assistant client converts the script to GBK and, if a character doesn't convert, runs an empty script and still reports success.
+- **On Server 2012 and 2012 R2 a script waiting for input (a missing mandatory parameter, `Read-Host`, a confirmation prompt) hangs until the timeout**.
+- **If the script exits with 3010 or 3009, the Cloud Assistant client restarts or shuts down the server right after**: installers often return 3010 to ask for a restart, so don't pass their exit code on with `exit`.
 - **The script plus the prefix aca adds must fit in 24 KB after base64** (about 18 KB of plain English text); output beyond the Cloud Assistant limit keeps only its beginning and end, and aca reports how many bytes were dropped from the middle, so filter large output in the script; to read a whole file, use `aca pull`.
 - **Change site files with `aca deploy`**: whatever you change with `aca run` has no backup, and `aca rollback` can't undo it.
 
