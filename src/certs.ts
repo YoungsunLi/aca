@@ -1,7 +1,7 @@
 import { createCipheriv, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import type { Config } from './config.ts';
-import { Ecs, type RunResult } from './ecs.ts';
+import { Ecs, records, type RunResult } from './ecs.ts';
 import { remove, signForEcs, upload } from './oss.ts';
 import { renderScript } from './ps.ts';
 
@@ -12,7 +12,7 @@ export type ReplaceOptions = { check?: boolean; force?: boolean };
 
 // 剩不到 30 天就报：留出买证书、逐台换的时间
 const WARN_DAYS = 30;
-const ROW = /^(.+?)\t(\S+)\t(?:([0-9A-F]{40})\t(\S+)\t(-?\d+)\t(.*?)\t(True|False)|ERROR\t(.*?))\r?$/gm;
+const ROW = /^(.+?)\t(\S+)\t(?:([0-9A-F]{40})\t(\S+)\t(-?\d+)\t(.*?)\t(True|False)|ERROR\t(.*))$/;
 
 // 查和换都覆盖登记站点所在服务器上的所有站点：没登记的站点一样在用这些证书
 const certInstances = (cfg: Config) => [...new Set(Object.values(cfg.sites).flatMap((s) => s.instances))];
@@ -29,7 +29,9 @@ export async function checkCerts(cfg: Config): Promise<{ checks: CertCheck[]; fa
       continue;
     }
     if (r.dropped) failures.push(`${instance}: Cloud Assistant truncated the output by ${r.dropped} bytes, some bindings are missing`);
-    for (const [, site, binding, thumbprint, expires, daysLeft, name, nameOk, error] of r.output.matchAll(ROW)) {
+    for (const m of records(r).map((line) => ROW.exec(line))) {
+      if (!m) continue;
+      const [, site, binding, thumbprint, expires, daysLeft, name, nameOk, error] = m;
       if (error !== undefined) {
         checks.push({ instance, site, binding, expires: '-', name: '-', thumbprint: '-', status: `handshake failed: ${error}` });
         continue;

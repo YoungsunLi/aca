@@ -1,5 +1,5 @@
 import { type Config, instanceId } from './config.ts';
-import { Ecs, inParallel } from './ecs.ts';
+import { Ecs, inParallel, records } from './ecs.ts';
 import { renderScript } from './ps.ts';
 
 /** 盘点出的一个站点或服务；mine 是能写进配置草稿的：开着的站点，没禁用的服务 */
@@ -35,13 +35,8 @@ export async function discover(cfg: Config, names: string[]): Promise<Discovery>
     if (r instanceof Error) failures.push(`${label}: ${r.message.split('\n')[0]}`);
     else if (r.status !== 'Success') failures.push(`${label}: [${r.status}] ${r.output.trim() || r.error}`);
     else {
-      const lines = r.output.split(/\r?\n/);
-      // 截断处可能落在最后一行中间；正好落在换行后时最后一段是空串
-      if (r.dropped) {
-        failures.push(`${label}: Cloud Assistant truncated the output by ${r.dropped} bytes, some sites or services are missing`);
-        lines.pop();
-      }
-      for (const line of lines.filter(Boolean)) {
+      if (r.dropped) failures.push(`${label}: Cloud Assistant truncated the output by ${r.dropped} bytes, some sites or services are missing`);
+      for (const line of records(r)) {
         const [kind, name, state, dir = '', newest = '', detail = '', mine = ''] = line.split('\t');
         // 只认符合格式的行，PowerShell 偶尔混进来的 WARNING 之类不能污染结果
         if (kind !== 'site' && kind !== 'service') continue;

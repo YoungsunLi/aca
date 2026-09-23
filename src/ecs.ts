@@ -10,6 +10,17 @@ export type Assistant = { online: boolean; version: string; heartbeat: string };
 /** dropped：输出超过云助手上限被丢掉的字节数 */
 export type RunResult = { status: string; exitCode: number | undefined; output: string; error: string; dropped: number };
 
+/**
+ * 服务器脚本逐行输出的记录，末尾一列是这一行前面部分的长度，返回去掉这一列的行。云助手的输出超过上限时保留开头和结尾、
+ * 丢掉中间，切口那一行由两截拼成，长度对不上，不收；没被截断时不核对：服务器代码页里没有的字符换成问号后长度可能变
+ */
+export function records(r: RunResult): string[] {
+  return r.output.split(/\r?\n/).flatMap((line) => {
+    const cut = line.lastIndexOf('\t');
+    return cut < 0 || (r.dropped && String(cut) !== line.slice(cut + 1)) ? [] : [line.slice(0, cut)];
+  });
+}
+
 // Terminated 是在控制台点了"停止执行"
 const TERMINAL_STATUS = new Set(['Success', 'Failed', 'Error', 'Timeout', 'Cancelled', 'Stopped', 'Terminated', 'Invalid', 'Aborted']);
 // Windows 版云助手客户端（实测 2.1.4）按系统 ANSI 代码页解码输出，改成 UTF-8 反而乱码。

@@ -213,7 +213,7 @@ async function reportEach(results: AsyncIterable<[string, RunResult]>) {
 
 function report(r: RunResult) {
   if (r.output) console.log(r.output.trimEnd());
-  if (r.dropped) console.error(`[output exceeded the Cloud Assistant limit, ${r.dropped} bytes dropped]`);
+  if (r.dropped) console.error(`[output exceeded the Cloud Assistant limit, ${r.dropped} bytes dropped from the middle]`);
   if (r.status !== 'Success') {
     console.error(`[${r.status}] exitCode=${r.exitCode ?? '?'} ${r.error}`.trimEnd());
     process.exitCode = r.exitCode || 1;

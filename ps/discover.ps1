@@ -1,5 +1,5 @@
-# 每行一个站点或服务，tab 分隔：种类、名字、状态、目录、最新文件的时间、说明、能不能写进配置草稿
-function Out-AcaRow { ($args | ForEach-Object { "$_" -replace '\s', ' ' }) -join "`t" }
+# 每行一个站点或服务，tab 分隔：种类、名字、状态、目录、最新文件的时间、说明、能不能写进配置草稿，末尾一列是前面部分的长度，见 ecs.ts 的 records
+function Out-AcaRow { $row = ($args | ForEach-Object { "$_" -replace '\s', ' ' }) -join "`t"; "$row`t$($row.Length)" }
 function Format-AcaNewest($web, $root) {
   $f = Get-AcaNewestFile $web $root
   if ($f) { $f.LastWriteTime.ToString('yyyy-MM-dd HH:mm') }
