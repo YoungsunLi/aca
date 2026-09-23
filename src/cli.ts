@@ -59,7 +59,7 @@ program.command('services').description('List configured Windows services with t
 
 program.command('run <instance> [script]').description('Run PowerShell on a server (instance ID or alias from the config) and wait for its output')
   .option('--file <path>', 'read the script from a UTF-8 file instead: on the command line, the local shell may rewrite its $, quotes and line breaks')
-  .option('-t, --timeout <sec>', 'seconds before Cloud Assistant kills the script', '300')
+  .option('-t, --timeout <sec>', 'seconds before Cloud Assistant kills the script and the processes it started', '300')
   .action(async (instance: string, inline: string | undefined, opts: { file?: string; timeout: string }) => {
     const timeout = Number(opts.timeout);
     if (!Number.isInteger(timeout) || timeout <= 0) throw new Error(`--timeout must be a positive integer of seconds, got "${opts.timeout}"`);

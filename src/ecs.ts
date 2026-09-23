@@ -107,6 +107,8 @@ export class Ecs {
       commandContent: Buffer.from(PS_PREAMBLE + script).toString('base64'),
       instanceId: [instanceId(this.#aliases, instance)],
       timeout: timeoutSec,
+      // 默认超时只杀 powershell，脚本启动的进程会接着跑
+      terminationMode: 'ProcessTree',
     }));
     // 云助手到时会强杀脚本并置 Timeout，本地再多等一分钟兜底，避免状态没更新时死等
     const deadline = Date.now() + (timeoutSec + 60) * 1000;
