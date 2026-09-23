@@ -334,7 +334,7 @@ On the same servers, aca switches every HTTPS binding that uses a certificate wi
 - **A certificate that is not valid now is refused**, and so is one that does not expire later than the one it replaces, as it is most likely the wrong file; to switch back, pass the old certificate's thumbprint instead of a PFX and add `-f`.
 - **Entries carrying http.sys settings beyond the IIS defaults** (client certificate negotiation, revocation checks and the like) are left alone: switching would drop those settings, so switch them by hand.
 - **The PFX is encrypted with a one-time key**, reaches the servers through OSS and is deleted once all servers are done: a private key can't go into RunCommand, whose content shows up in the Cloud Assistant invocation history. The PFX password is read from `--password-file` and, like the decryption key, does stay in that history.
-- **Windows Server 2016 and earlier can't open AES-encrypted PFX files** (OpenSSL 3's default) and report a wrong password instead; re-export with `openssl pkcs12 -export -legacy`.
+- **Windows Server 2016 and earlier can't open AES-encrypted PFX files** (OpenSSL 3's default) and report a wrong password instead; re-export with `openssl pkcs12 -export -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1`.
 
 ## Polling failures and timeouts
 

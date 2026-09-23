@@ -334,7 +334,7 @@ aca 在同一批服务器上，把正在用同名证书（按证书使用者名�
 - **新证书不在有效期内，aca 拒绝换**；不比被换掉的晚到期也拒绝，多半是拿错了文件，换回旧证书时把 PFX 换成旧证书的指纹，并加 `-f`。
 - **条目上有 IIS 默认值以外的 http.sys 设置**（客户端证书协商、吊销检查等）时 aca 不换：换证书会把这些设置丢掉，这种条目要手工换。
 - **aca 把 PFX 用一次性密钥加密后经 OSS 传到服务器**，全部服务器处理完就删掉：私钥不能写进 RunCommand，云助手的执行记录里查得到命令内容。PFX 密码从 `--password-file` 读，和解密密钥一起留在执行记录里。
-- **Windows Server 2016 及更早的系统打不开 AES 加密的 PFX**（OpenSSL 3 默认就是），报的却是密码不正确，用 `openssl pkcs12 -export -legacy` 重新导出。
+- **Windows Server 2016 及更早的系统打不开 AES 加密的 PFX**（OpenSSL 3 默认就是），报的却是密码不正确，用 `openssl pkcs12 -export -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1` 重新导出。
 
 ## 轮询失败或超时
 

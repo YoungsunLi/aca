@@ -28,7 +28,7 @@ function Read-AcaSource {
   $aes.IV = [byte[]]$blob[0..15]
   $script:pfxBytes = $aes.CreateDecryptor().TransformFinalBlock($blob, 16, $blob.Length - 16)
   try { $content = @(Import-AcaPfx 'MachineKeySet') }
-  catch { throw "Cannot open the PFX: $($_.Exception.InnerException.Message) Windows Server 2016 and earlier report AES-encrypted PFX files (OpenSSL 3's default) as a wrong password; re-export with openssl pkcs12 -export -legacy" }
+  catch { throw "Cannot open the PFX: $($_.Exception.InnerException.Message) Windows Server 2016 and earlier report AES-encrypted PFX files (OpenSSL 3's default) as a wrong password; re-export with openssl pkcs12 -export -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1" }
   # 只留公钥部分，临时导入的私钥马上删：这台服务器上没有要换的绑定，就不该留下它
   try {
     $leaf = @($content | Where-Object { $_.HasPrivateKey })
