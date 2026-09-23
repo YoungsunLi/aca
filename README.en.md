@@ -137,6 +137,7 @@ aca services                                    # list Windows services with the
 
 ```sh
 aca run web1 "Get-Website | select name,state"  # run any PowerShell as SYSTEM
+aca run web1 --file ./check.ps1                 # run the script in a file, for scripts with $, quotes or line breaks
 aca pull web1 "C:\inetpub\logs\LogFiles\W3SVC1\u_ex260919.log"  # copy a file from a server to the current directory
 aca logs "Default Web Site"                     # the latest 20 lines of the site's IIS log on each server
 aca logs "Default Web Site" --since 30m -n 500  # the latest 500 lines of the last 30 minutes
@@ -187,6 +188,7 @@ aca lists the IIS sites and Windows services on the servers, and ends with a con
 aca runs any PowerShell on the server as SYSTEM and prints the output when it finishes; if the script exits non-zero (an uncaught exception included), aca exits with the same code.
 
 - **Handy for ad-hoc operations** such as reading logs, checking disk space or restarting an app pool; the instance can be an alias from the config or any instance ID in the configured region.
+- **Use `--file <file>` for a script with `$`, quotes or line breaks**: a script on the command line goes through the local shell first, which may silently change them; the file must be UTF-8.
 - **`-t` kills the script after this many seconds** (default 300).
 - **By default a failing PowerShell command only reports an error** and the exit code stays 0; start the script with `$ErrorActionPreference = 'Stop'` to make any error a failure.
 - **The script plus the prefix aca adds must fit in 24 KB after base64** (about 18 KB of plain English text); output beyond the Cloud Assistant limit is cut off and aca reports how many bytes were dropped, so filter large output in the script; to read a whole file, use `aca pull`.

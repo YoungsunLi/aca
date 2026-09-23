@@ -57,11 +57,14 @@ program.command('services').description('List configured Windows services with t
   }
 });
 
-program.command('run <instance> <script>').description('Run PowerShell on a server (instance ID or alias from the config) and wait for its output')
+program.command('run <instance> [script]').description('Run PowerShell on a server (instance ID or alias from the config) and wait for its output')
+  .option('--file <path>', 'read the script from a UTF-8 file instead: on the command line, the local shell may rewrite its $, quotes and line breaks')
   .option('-t, --timeout <sec>', 'seconds before Cloud Assistant kills the script', '300')
-  .action(async (instance: string, script: string, opts: { timeout: string }) => {
+  .action(async (instance: string, inline: string | undefined, opts: { file?: string; timeout: string }) => {
     const timeout = Number(opts.timeout);
     if (!Number.isInteger(timeout) || timeout <= 0) throw new Error(`--timeout must be a positive integer of seconds, got "${opts.timeout}"`);
+    if ((inline === undefined) === (opts.file === undefined)) throw new Error('Give the script either as an argument or with --file');
+    const script = inline ?? readUtf8(opts.file!);
     // 放进子作用域：否则前缀里兜底的 trap 会抢在用户自己的 trap 之前接住异常
     report(await new Ecs(loadConfig()).runPowerShell(instance, `& {\n${script}\n}`, timeout));
   });
@@ -190,6 +193,16 @@ program.command('skill').description('Agent Skill that lets Claude Code, Codex a
       console.log(`Installed ${dst}`);
     }
   });
+
+// 不是 UTF-8 的文件照常解码会把中文悄悄换成替换字符，比如 Windows PowerShell 5.1 的 Set-Content 默认写 ANSI
+function readUtf8(file: string): string {
+  const bytes = readFileSync(file);
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch (e) {
+    throw new Error(`${file} is not UTF-8 text`, { cause: e });
+  }
+}
 
 async function reportEach(results: AsyncIterable<[string, RunResult]>) {
   for await (const [name, r] of results) {

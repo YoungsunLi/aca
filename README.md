@@ -137,6 +137,7 @@ aca services                                    # 列出 Windows 服务与它们
 
 ```sh
 aca run web1 "Get-Website | select name,state"  # 以 SYSTEM 执行任意 PowerShell
+aca run web1 --file ./check.ps1                 # 执行文件里的脚本，带 $、引号或换行时用它
 aca pull web1 "C:\inetpub\logs\LogFiles\W3SVC1\u_ex260919.log"  # 把服务器上的文件拉到本机当前目录
 aca logs "Default Web Site"                     # 每台服务器上这个站点最新的 20 行 IIS 日志
 aca logs "Default Web Site" --since 30m -n 500  # 最近 30 分钟里最新的 500 行
@@ -187,6 +188,7 @@ aca 在服务器上列出 IIS 站点和 Windows 服务，最后给出一份配�
 aca 以 SYSTEM 身份在服务器上执行任意 PowerShell，结束后打印输出；脚本以非 0 退出（包括没被捕获的异常）时 aca 用同样的退出码退出。
 
 - **适合查日志、看磁盘、重启应用池这类临时运维**，实例可以写配置里的别名，也可以写当前地域的任意实例 ID。
+- **脚本里有 `$`、引号或换行时用 `--file <文件>`**：写在命令行上的脚本要先经本机 shell 处理，这些字符可能被悄悄改掉；文件要是 UTF-8。
 - **`-t` 指定超时秒数**，到点强杀（默认 300）。
 - **PowerShell 默认出错的命令只报错不中止**，退出码仍是 0；要让任何错误都算失败，脚本开头加 `$ErrorActionPreference = 'Stop'`。
 - **脚本连同 aca 加的前缀 base64 后不能超过 24 KB**（纯英文约 18 KB）；输出超过云助手上限会被截断，aca 会提示丢了多少字节，大的输出先在脚本里筛过；要看整个文件用 `aca pull`。
