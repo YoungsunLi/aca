@@ -141,6 +141,7 @@ aca run web1 --file ./check.ps1                 # run the script in a file, for 
 aca pull web1 "C:\inetpub\logs\LogFiles\W3SVC1\u_ex260919.log"  # copy a file from a server to the current directory
 aca logs "Default Web Site"                     # the latest 20 lines of the site's IIS log on each server
 aca logs "Default Web Site" --since 30m -n 500  # the latest 500 lines of the last 30 minutes
+aca logs "Default Web Site" --httperr --since 2h  # requests to the site that never reached IIS in the last 2 hours
 aca events "Default Web Site"                   # the latest 20 Windows events about the site on each server
 aca events MyApp.Worker --since 2h              # the service's events of the last 2 hours
 aca diff "Default Web Site"                     # compare the files on every server by content hash and list the ones that differ
@@ -214,6 +215,7 @@ aca finds the site's log files on each server from the site's logging settings i
 - **Times in the log are UTC**: that is how the IIS W3C format records them; aca prints the lines as they are and converts only `--since` and `--until` to UTC to compare.
 - **Requests from a moment ago are there too**: HTTP.sys holds log entries for a while before writing them, and aca has it write them out before reading.
 - **Only the W3C format** (the IIS default) is read; the lines go through OSS, encrypted and deleted after reading, like `aca pull`.
+- **`--httperr` reads the HTTP.sys error log instead, and needs `--since`**: requests go through Windows' HTTP.sys before IIS, and the ones that never reach IIS, answered with an error or dropped by HTTP.sys itself, are recorded only there, such as the 503s after the app pool stops (`AppOffline`) or the requests in flight when a worker process crashed (`Connection_Abandoned_By_ReqQueue`). It holds all sites; aca picks the site's lines by site ID, without telling apart the applications under the site. HTTP.sys never deletes these files, so without a start aca would read through all of them.
 
 ### `aca events`
 

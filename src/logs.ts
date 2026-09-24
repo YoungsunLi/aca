@@ -8,12 +8,14 @@ import { renderScript, targetLibs } from './ps.ts';
 const TIMEOUT = 600;
 const UNIT_MS: Record<string, number> = { m: 60_000, h: 3_600_000, d: 86_400_000 };
 
-export type LogOptions = { tail: string; since?: string; until?: string };
+export type LogOptions = { tail: string; since?: string; until?: string; httperr?: boolean };
 /** lines 是取到的日志行或事件，脚本没跑成时没有 */
 export type Tail = { instance: string; result: RunResult; lines?: string }[];
 
-export const readLogs = (cfg: Config, site: string, opts: LogOptions) =>
-  readTail(cfg, 'logs', getSite(cfg, site).instances, { NAME: site }, [...targetLibs(site), 'upload'], opts);
+export function readLogs(cfg: Config, site: string, opts: LogOptions) {
+  if (opts.httperr && !opts.since) throw new Error('--httperr needs --since: HTTP.sys never deletes its error logs, and without a start aca would read back through all of them');
+  return readTail(cfg, 'logs', getSite(cfg, site).instances, { NAME: site, HTTPERR: String(Boolean(opts.httperr)) }, [...targetLibs(site), 'upload'], opts);
+}
 
 export function readEvents(cfg: Config, name: string, opts: LogOptions) {
   const target = getTarget(cfg, name);

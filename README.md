@@ -141,6 +141,7 @@ aca run web1 --file ./check.ps1                 # 执行文件里的脚本，带
 aca pull web1 "C:\inetpub\logs\LogFiles\W3SVC1\u_ex260919.log"  # 把服务器上的文件拉到本机当前目录
 aca logs "Default Web Site"                     # 每台服务器上这个站点最新的 20 行 IIS 日志
 aca logs "Default Web Site" --since 30m -n 500  # 最近 30 分钟里最新的 500 行
+aca logs "Default Web Site" --httperr --since 2h  # 最近 2 小时里这个站点没进到 IIS 的请求
 aca events "Default Web Site"                   # 每台服务器上和这个站点有关的最新 20 条 Windows 事件
 aca events MyApp.Worker --since 2h              # 最近 2 小时里这个服务的事件
 aca diff "Default Web Site"                     # 按内容哈希比对每台服务器上的文件，列出不一样的
@@ -214,6 +215,7 @@ aca 按 IIS 里站点的日志设置，在每台服务器上找到这个站点�
 - **日志里的时间是 UTC**：IIS 的 W3C 格式就这样记，aca 原样输出，只把 `--since`、`--until` 换算成 UTC 去比。
 - **刚发生的请求也读得到**：HTTP.sys 攒着日志过一会儿才写盘，aca 读之前先让它写下去。
 - **只读 W3C 格式**（IIS 的默认格式）；取到的行经 OSS 中转，和 `aca pull` 一样加密、读完就删。
+- **`--httperr` 改读 HTTP.sys 的错误日志，要同时给 `--since`**：请求先经过 Windows 的 HTTP.sys 再转给 IIS，没转过去的由 HTTP.sys 自己回错误或断开连接，只记在这份日志里，比如应用池停了之后的 503（`AppOffline`）、工作进程处理请求时崩溃（`Connection_Abandoned_By_ReqQueue`）。所有站点记在一处，aca 按站点 ID 挑，不细分到站点下的应用程序；HTTP.sys 从不删这些文件，不给起点就要从头读完。
 
 ### `aca events`
 

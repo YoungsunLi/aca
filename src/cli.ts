@@ -78,6 +78,7 @@ program.command('pull <instance> <file> [local]').description('Copy a file from 
   });
 
 tailOptions(program.command('logs <site>').description('Print the IIS log of a site from each of its servers: the latest lines, or the latest lines in a time range; times in the log are UTC'), 'lines')
+  .option('--httperr', 'read the lines of the site in the HTTP.sys error log instead: requests that never reached IIS, answered with an error or dropped by HTTP.sys itself, such as the 503s after the app pool stops; needs --since')
   .action(async (site: string, opts: LogOptions) => printTail(await readLogs(loadConfig(), site, opts)));
 
 tailOptions(program.command('events <target>').description('Print the Windows events about a site or service from each of its servers: app pool crashes, recycles and rapid-fail stops, ASP.NET and ASP.NET Core errors, service stops, crashes and startup failures; the latest events, or the latest in a time range; times are the server\'s local time'), 'events')

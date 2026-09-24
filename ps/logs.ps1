@@ -2,21 +2,29 @@ $name = '__NAME__'
 $tail = [int]'__TAIL__'
 $since = '__SINCE__'
 $until = '__UNTIL__'
+$httperr = '__HTTPERR__' -eq 'true'
 # 一天的日志能有上百 MB，时间段在文件末尾时要从头读完，别跟 IIS 的工作进程抢 CPU
 [Diagnostics.Process]::GetCurrentProcess().PriorityClass = 'BelowNormal'
 $web = Get-AcaSite $name
 # 应用和站点记在同一个日志里，只取应用路径下的请求，再去掉更深一层的应用（/api 下的 /api/v2）；W3C 日志里路径的空格写成 +
 $appPrefix = "$($web.AppPath)/" -replace ' ', '+'
 $inner = @(if ($web.AppPath) { Get-WebApplication -Site $web.name | Where-Object { $_.path.StartsWith("$($web.AppPath)/", 'OrdinalIgnoreCase') } | ForEach-Object { "$($_.path)/" -replace ' ', '+' } })
-$central = Get-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter system.applicationHost/log -Name centralLogFileMode
-if ($central -ne 'Site') { throw "IIS on this server writes one log for all sites (centralLogFileMode $central); aca logs reads per-site logs only" }
-if ($web.logFile.logFormat -ne 'W3C') { throw "Site $name writes $($web.logFile.logFormat) logs; aca logs reads W3C logs only" }
-$dir = Join-Path ([Environment]::ExpandEnvironmentVariables($web.logFile.directory)) "W3SVC$($web.id)"
-# 关了日志的站点目录里只剩关之前的文件。IIS 管理器里"禁用"日志改的是 dontLog，logFile.enabled 还是 True；
-# logTargetW3C 是 IIS 8.5 才有的，只记到 ETW 时也不写文件
-$target = $web.logFile.logTargetW3C
-if (-not $web.logFile.enabled -or ($target -and $target -notmatch 'File') -or (Get-WebConfigurationProperty -PSPath "MACHINE/WEBROOT/APPHOST/$name" -Filter system.webServer/httpLogging -Name dontLog).Value) {
-  'WARN: IIS logging is off for this site, so its log stops where logging was turned off'
+if ($httperr) {
+  # 没进到 IIS 的请求（如应用池停了之后的 503）只记在这里。所有站点记在一起，按站点 ID 挑；不细分到应用：这里的 URL 是原始编码，和 IIS 日志的写法不同
+  $http = Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\HTTP\Parameters
+  $dir = Join-Path $(if ($http.ErrorLoggingDir) { [Environment]::ExpandEnvironmentVariables($http.ErrorLoggingDir) } else { "$env:windir\System32\LogFiles" }) 'HTTPERR'
+  if ($http.EnableErrorLogging -eq 0) { 'WARN: HTTP.sys error logging is off, so its log stops where logging was turned off' }
+} else {
+  $central = Get-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter system.applicationHost/log -Name centralLogFileMode
+  if ($central -ne 'Site') { throw "IIS on this server writes one log for all sites (centralLogFileMode $central); aca logs reads per-site logs only" }
+  if ($web.logFile.logFormat -ne 'W3C') { throw "Site $name writes $($web.logFile.logFormat) logs; aca logs reads W3C logs only" }
+  $dir = Join-Path ([Environment]::ExpandEnvironmentVariables($web.logFile.directory)) "W3SVC$($web.id)"
+  # 关了日志的站点目录里只剩关之前的文件。IIS 管理器里"禁用"日志改的是 dontLog，logFile.enabled 还是 True；
+  # logTargetW3C 是 IIS 8.5 才有的，只记到 ETW 时也不写文件
+  $target = $web.logFile.logTargetW3C
+  if (-not $web.logFile.enabled -or ($target -and $target -notmatch 'File') -or (Get-WebConfigurationProperty -PSPath "MACHINE/WEBROOT/APPHOST/$name" -Filter system.webServer/httpLogging -Name dontLog).Value) {
+    'WARN: IIS logging is off for this site, so its log stops where logging was turned off'
+  }
 }
 # HTTP.sys 攒满缓冲区或过一分钟才写盘，不刷的话刚发生的请求还不在文件里
 netsh http flush logbuffer | Out-Null
@@ -41,8 +49,11 @@ foreach ($f in $files) {
         if ($line.StartsWith('#Fields:')) {
           if (($since -or $until) -and -not $line.StartsWith('#Fields: date time ')) { throw "$($f.FullName) does not start its lines with date and time, so aca logs cannot pick them by time: $line" }
           $fields = $line
-          $uri = [array]::IndexOf($line.Substring(9).Split(' '), 'cs-uri-stem')
-          if ($web.AppPath -and $uri -lt 0) { throw "$($f.FullName) does not log cs-uri-stem, so aca logs cannot pick the requests of ${name}: $line" }
+          $cols = $line.Substring(9).Split(' ')
+          $uri = [array]::IndexOf($cols, 'cs-uri-stem')
+          $siteId = [array]::IndexOf($cols, 's-siteid')
+          if ($httperr -and $siteId -lt 0) { throw "$($f.FullName) does not log s-siteid, so aca logs cannot pick the requests of ${name}: $line" }
+          if (-not $httperr -and $web.AppPath -and $uri -lt 0) { throw "$($f.FullName) does not log cs-uri-stem, so aca logs cannot pick the requests of ${name}: $line" }
         }
         continue
       }
@@ -50,7 +61,9 @@ foreach ($f in $files) {
       # 日志里的时间是 UTC，$since、$until 在本机换算好了，和行首的 date time 按字符比
       if ($since -and [string]::CompareOrdinal($line, 0, $since, 0, 19) -lt 0) { continue }
       if ($until -and [string]::CompareOrdinal($line, 0, $until, 0, 19) -gt 0) { break }
-      if ($web.AppPath) {
+      if ($httperr) {
+        if ($line.Split(' ')[$siteId] -ne $web.id) { continue }
+      } elseif ($web.AppPath) {
         $u = $line.Split(' ')[$uri] + '/'
         if (-not $u.StartsWith($appPrefix, 'OrdinalIgnoreCase')) { continue }
         foreach ($i in $inner) { if ($u.StartsWith($i, 'OrdinalIgnoreCase')) { continue read } }
