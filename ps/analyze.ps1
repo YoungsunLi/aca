@@ -9,13 +9,16 @@ $web = if ($dir) { $null } else { Get-AcaSite $name }
 $root = if ($dir) { Get-AcaServiceRoot $name $dir } else { Get-AcaRoot $web }
 $passed = $false
 try {
-  $configs = @(Get-ChildItem -LiteralPath $new -File | Where-Object { Test-AcaEnvConfig $web $_.Name })
-  # 没排除的会整份覆盖服务器上那份，只放行两种：配了 overwriteConfig；ASP.NET Core 的 web.config，它不放环境值
-  foreach ($f in @($configs | Where-Object { -not (Test-AcaExcluded $_.Name $exclude) })) {
-    # 服务没配 overwriteConfig 怎样都拦，不用读
-    $x = if ($overwrite -or $web) { try { Read-AcaXml ([IO.File]::ReadAllText($f.FullName)) } catch { throw "$($f.Name) in the package is not valid XML: $($_.Exception.Message)" } }
-    if (-not $overwrite -and -not ($x -and (Get-AcaCoreHandler $x))) { throw "Package root contains $($f.Name), which would overwrite the environment config on the server; add it to exclude in the aca config, or set overwriteConfig if the package's copy suits every server" }
-    # 包里这份是刚生成的，总比服务器上那份新，"比服务器旧"的检查认不出有人在服务器上改过它
+  $top = @(Get-ChildItem -LiteralPath $new -File)
+  $configs = @($top | Where-Object { Test-AcaEnvConfig $web $_.Name })
+  # 没排除的环境配置和 appsettings*.json 会整份覆盖服务器上那份
+  foreach ($f in @($top | Where-Object { ((Test-AcaEnvConfig $web $_.Name) -or $_.Name -match '^appsettings(\..+)?\.json$') -and -not (Test-AcaExcluded $_.Name $exclude) })) {
+    # 环境配置只放行两种：配了 overwriteConfig；ASP.NET Core 的 web.config，它不放环境值。服务没配 overwriteConfig 怎样都拦，不用读
+    if (Test-AcaEnvConfig $web $f.Name) {
+      $x = if ($overwrite -or $web) { try { Read-AcaXml ([IO.File]::ReadAllText($f.FullName)) } catch { throw "$($f.Name) in the package is not valid XML: $($_.Exception.Message)" } }
+      if (-not $overwrite -and -not ($x -and (Get-AcaCoreHandler $x))) { throw "Package root contains $($f.Name), which would overwrite the environment config on the server; add it to exclude in the aca config, or set overwriteConfig if the package's copy suits every server" }
+    }
+    # 环境配置是发布时刚生成的，appsettings 在源码里改过也会比服务器上那份新，"比服务器旧"的检查认不出有人在服务器上改过它
     $path = Join-Path $root $f.Name
     if ((Test-Path -LiteralPath $path) -and [IO.File]::ReadAllText($path) -cne [IO.File]::ReadAllText($f.FullName)) { "NOTE: $($f.Name) on the server differs from the package's copy, which replaces it whole: settings added on the server will be lost" }
   }

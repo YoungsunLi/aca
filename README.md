@@ -263,7 +263,7 @@ aca 先在每台服务器上同时下载解压、预检查，每台都通过后�
 
 环境配置指站点的 `web.config`、服务的 `<可执行文件>.exe.config`：它们在服务器上自己维护，出现在包根目录时 aca 报错，把它列进 `exclude` 就不会被整份覆盖；配了 `overwriteConfig` 的，aca 把它当普通文件发。
 
-- **ASP.NET Core 的 `web.config` 是发布时生成的**，aca 直接当普通文件整份发：在服务器上那份里加的 `environmentVariables` 等设置会被覆盖，按服务器区分的值放到 `appsettings.<环境>.json` 或服务器的环境变量里。整份发的环境配置，服务器上那份和包里的不一样时预检查会提示。
+- **ASP.NET Core 的 `web.config` 是发布时生成的**，aca 直接当普通文件整份发：在服务器上那份里加的 `environmentVariables` 等设置会被覆盖，按服务器区分的值放到 `appsettings.<环境>.json` 或服务器的环境变量里，服务器上自己维护的 `appsettings.<环境>.json` 要列进 `exclude`。整份发的环境配置和 `appsettings*.json`，服务器上那份和包里的不一样时预检查会提示。
 - **环境配置里由构建决定的部分跟着包走**：包里带着环境配置时（它在 `exclude` 里，本身不发），aca 把下面这些部分合进服务器上那份，连接串、`appSettings` 等其余内容和改动之外的每个字节都保持原样。
   - **按条目合并**：程序集绑定重定向（`runtime/assemblyBinding`）、`system.codedom` 的编译器、Entity Framework 的 `providers`、`compilation` 的 `assemblies`。包里有的条目以包为准，只在服务器上有的保留。
   - **整段换成包里的**：`startup`。

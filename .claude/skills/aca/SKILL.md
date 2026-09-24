@@ -114,7 +114,7 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
    有 `This server lacks what the package needs` 时，服务器缺包要的 .NET Framework 版本，或者程序集的位数和进程对不上：告诉用户在服务器上装好、调好，或者换构建，用户确认没问题才加 `--force`。
    `WARN <应用>.runtimeconfig.json in the package asks for ...` 是服务器上多半没装包要的 .NET Core 共享框架，发出去可能起不来，告诉用户先确认。
    报 `Package root contains <环境配置>` 时，列进 `exclude` 还是配 `overwriteConfig` 由用户定：`overwriteConfig` 会拿包里那份整份覆盖服务器上的，只有环境值都不在这份文件里时才对。
-   `NOTE: <环境配置> on the server differs from the package's copy` 是这份配置要被包里那份整份覆盖，而服务器上那份内容不一样，可能有人在服务器上加过设置（如 `environmentVariables`）：让用户确认那些内容不要了，或者先挪到别处，再发。
+   `NOTE: <配置文件> on the server differs from the package's copy` 是这份环境配置或 `appsettings*.json` 要被包里那份整份覆盖，而服务器上那份内容不一样，可能有人在服务器上加过设置（如 `environmentVariables`、连接串）：让用户确认那些内容不要了，或者先挪到别处、把服务器上自己维护的列进 `exclude`，再发。
 3. 发布会让站点或服务停几秒到几十秒，执行前向用户确认目标和包路径。
    配了 `stage` 的正式站要求包先在预发布站发过且是那边最后一次成功发布，发这种站用 `--from-stage`（`--check` 时也加上），发的就是预发布站验证过的那个包；
    报错让先发预发布站（`deploy to the stage site`）时告诉用户要先发预发布站并验证，不要用 `--skip-stage` 绕过，除非用户明确要求；
