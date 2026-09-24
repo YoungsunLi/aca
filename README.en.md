@@ -257,7 +257,7 @@ aca first downloads, extracts and pre-checks on every server at the same time; o
 - **The pre-check also verifies the server meets the runtime requirements this deploy brings**: when either of the first two below is unmet, aca lists it and deploys to no server. Install or adjust things on the server and deploy again, or add `-f` once you're sure it's fine.
   - **.NET Framework version**: the target framework the changed assemblies were built for, and newly written `targetFramework` or `startup` `sku` values in the config, are newer than what the server has.
   - **Bitness**: a changed assembly loads only in a 64-bit process while the site's app pool is 32-bit, or the other way round. For a service, the executable decides, and AnyCPU with "Prefer 32-bit" runs in a 32-bit process too; when the executable's bitness changes, the assemblies already there are checked again.
-  - **A missing .NET Core shared framework only gets a warning**: a framework the package's `runtimeconfig.json` asks for can't be found on the server under its roll-forward rule. Where the host looks and which version it accepts also depend on environment variables (`DOTNET_ROOT`, `DOTNET_ROLL_FORWARD` and others) that aca can't fully see, so it doesn't block.
+  - **A missing .NET Core shared framework only gets a warning**: a framework the package's `runtimeconfig.json` asks for (for a single-file publish, aca reads the copy bundled in the exe) can't be found on the server under its roll-forward rule. Where the host looks and which version it accepts also depend on environment variables (`DOTNET_ROOT`, `DOTNET_ROLL_FORWARD` and others) that aca can't fully see, so it doesn't block.
 
 #### Environment config
 

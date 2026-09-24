@@ -26,8 +26,8 @@ function Compare-AcaSemver($a, $b) {
 }
 # runtimeconfig.json 要的共享框架里，服务器上按前滚规则找不到的。只能估计：应用跑在几位上、环境变量里的 DOTNET_ROOT、
 # DOTNET_ROLL_FORWARD 都会改变宿主去哪找、认哪个版本，aca 看不全，所以 32 位、64 位两份 dotnet 有一份装着就算，找不到也只提示
-function Get-AcaMissingFrameworks($path, $dotnets) {
-  $o = ([IO.File]::ReadAllText($path) | ConvertFrom-Json).runtimeOptions
+function Get-AcaMissingFrameworks($json, $dotnets) {
+  $o = ($json | ConvertFrom-Json).runtimeOptions
   # 旧写法 rollForwardOnNoCandidateFx：0 只前滚补丁号，1 前滚次版本号，2 前滚主版本号
   $legacy = @{ '0' = 'LatestPatch'; '1' = 'Minor'; '2' = 'Major' }
   foreach ($fx in @(@($o.framework) + @($o.frameworks) | Where-Object { $_ })) {
@@ -43,7 +43,28 @@ function Get-AcaMissingFrameworks($path, $dotnets) {
     if (-not $ok) { "$($fx.name) $($fx.version)$(if ($policy -ne 'Minor') { " (rollForward $policy)" }); this server has $(if ($have) { $have -join ', ' } else { 'none' })" }
   }
 }
-# 发布后是 .NET Core 的：站点的 web.config 在根路径上配了 aspNetCore，服务的可执行文件旁边有同名 runtimeconfig.json。
+# 单文件发布的 runtimeconfig.json 打包在 exe 里：apphost 里这段签名（base64）前面 8 字节是包头的位置，不是单文件的是 0。
+# 包头依次是主版本、次版本、文件数、bundle ID（一个字节的长度加内容），.NET 5（主版本 2）起接着是 deps.json、runtimeconfig.json 各自的位置和长度；
+# runtimeconfig.json 不压缩
+function Read-AcaBundled($path) {
+  $b = [IO.File]::ReadAllBytes($path)
+  $l = [Text.Encoding]::GetEncoding(28591)
+  $i = $l.GetString($b).IndexOf($l.GetString([Convert]::FromBase64String('ixICuWphIDhye5MCFNegMhP1uebvrjMY7jstziSzaq4=')), [StringComparison]::Ordinal)
+  if ($i -lt 8) { return }
+  $h = [BitConverter]::ToInt64($b, $i - 8)
+  if (-not $h -or [BitConverter]::ToUInt32($b, $h) -lt 2) { return }
+  $p = $h + 13 + $b[$h + 12]
+  [Text.Encoding]::UTF8.GetString($b, [BitConverter]::ToInt64($b, $p + 16), [BitConverter]::ToInt64($b, $p + 24)).TrimStart([char]0xFEFF)
+}
+# 生效的 runtimeconfig.json，$of 给出文件在哪：从 apphost 启动的单文件发布打包在 exe 里；
+# 其余的在旁边，dotnet 启动 App.dll 时目录里留着以前单文件发布的 App.exe 也不算
+function Read-AcaRuntimeConfig($app, $apphost, $of) {
+  $exe = if ($apphost) { & $of "$app.exe" }
+  $json = & $of "$app.runtimeconfig.json"
+  $t = if ($exe) { Read-AcaBundled $exe }
+  if ($t) { $t } elseif ($json) { [IO.File]::ReadAllText($json) }
+}
+# 发布后是 .NET Core 的：站点的 web.config 在根路径上配了 aspNetCore，服务的可执行文件带着 runtimeconfig.json。
 # 是的话留下 netcore，再列出包要的共享框架里服务器上找不到的
 function Invoke-AcaCoreCheck($web, $name, $root, $new, $exclude, $work) {
   if ($web) {
@@ -55,16 +76,19 @@ function Invoke-AcaCoreCheck($web, $name, $root, $new, $exclude, $work) {
     if ($handler) {
       # processPath 是 apphost（.\App.exe），或者是 dotnet、arguments 里是 .\App.dll
       $pp = [Environment]::ExpandEnvironmentVariables($handler.GetAttribute('processPath'))
-      $app = if ($pp -match '([^\\/]+)\.exe$' -and $matches[1] -ne 'dotnet') { $matches[1] } elseif ($handler.GetAttribute('arguments') -match '([^\\/\s"]+)\.dll') { $matches[1] }
+      $apphost = $pp -match '([^\\/]+)\.exe$' -and $matches[1] -ne 'dotnet'
+      $app = if ($apphost) { $matches[1] } elseif ($handler.GetAttribute('arguments') -match '([^\\/\s"]+)\.dll') { $matches[1] }
     }
-  } elseif (@(Get-WmiObject Win32_Service | Where-Object { $_.Name -eq $name })[0].PathName -match ('^"?' + [regex]::Escape($root) + '\\([^\\"]+?)\.exe')) { $app = $matches[1] }
-  $rc = if ($app) { Get-AcaAfter "$app.runtimeconfig.json" $new $root $exclude }
+  } elseif (@(Get-WmiObject Win32_Service | Where-Object { $_.Name -eq $name })[0].PathName -match ('^"?' + [regex]::Escape($root) + '\\([^\\"]+?)\.exe')) {
+    $app = $matches[1]
+    $apphost = $true
+  }
+  $rc = if ($app) { Read-AcaRuntimeConfig $app $apphost { param($rel) Get-AcaAfter $rel $new $root $exclude } }
   if (-not ($handler -or $rc)) { return }
   # refs 看到它就不按 .NET Framework 的规则查引用：.NET Core 按 deps.json 找程序集，目录里的高版本可以顶替引用的低版本，按那套规则会误报
   New-Item -ItemType File -Path "$work\netcore" | Out-Null
-  $old = "$root\$app.runtimeconfig.json"
   # 和服务器上那份一样的，要的运行时原来就要，不是这次发布带来的
-  if ($rc -eq "$new\$app.runtimeconfig.json" -and -not ((Test-Path -LiteralPath $old) -and (Get-AcaHash ([IO.File]::ReadAllBytes($rc))) -eq (Get-AcaHash ([IO.File]::ReadAllBytes($old))))) {
+  if ($rc -and $rc -cne (Read-AcaRuntimeConfig $app $apphost { param($rel) if (Test-Path -LiteralPath "$root\$rel") { "$root\$rel" } })) {
     # processPath 写了 dotnet.exe 的完整路径，共享框架就只在它旁边找
     $dotnets = if ($pp -match '\\dotnet\.exe$' -and [IO.Path]::IsPathRooted($pp)) { Split-Path $pp } else { "$env:ProgramFiles\dotnet", "${env:ProgramFiles(x86)}\dotnet" }
     Get-AcaMissingFrameworks $rc $dotnets | ForEach-Object { "WARN $app.runtimeconfig.json in the package asks for $_" }
