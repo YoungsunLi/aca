@@ -14,12 +14,12 @@ export type Tail = { instance: string; result: RunResult; lines?: string }[];
 
 export function readLogs(cfg: Config, site: string, opts: LogOptions) {
   if (opts.httperr && !opts.since) throw new Error('--httperr needs --since: HTTP.sys never deletes its error logs, and without a start aca would read back through all of them');
-  return readTail(cfg, 'logs', getSite(cfg, site).instances, { NAME: site, HTTPERR: String(Boolean(opts.httperr)) }, [...targetLibs(site), 'upload'], opts);
+  return readTail(cfg, 'logs', getSite(cfg, site).instances, { NAME: site, HTTPERR: String(Boolean(opts.httperr)) }, [...targetLibs(cfg, site), 'upload'], opts);
 }
 
 export function readEvents(cfg: Config, name: string, opts: LogOptions) {
   const target = getTarget(cfg, name);
-  return readTail(cfg, 'events', target.instances, targetVars(name, target), [...targetLibs(name), 'upload', 'exe'], opts);
+  return readTail(cfg, 'events', target.instances, targetVars(name, target), [...targetLibs(cfg, name), 'upload'], opts);
 }
 
 async function readTail(cfg: Config, script: string, instances: string[], vars: Record<string, string>, libs: string[], { tail, since, until }: LogOptions): Promise<Tail> {

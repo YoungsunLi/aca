@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import type { Config } from './config.ts';
 
 // 脚本放在仓库顶层 ps/，src/ 和编译出的 dist/ 用同一个相对路径都能找到。
 // 整行注释和行首缩进不发到服务器：RunCommand 内容 base64 后上限 24 KB，STS 类凭证签出的 URL 长度不定；
@@ -11,8 +12,12 @@ const COMMON = read('common');
 // 只把单引号翻倍不够：PowerShell 把 ‘ ’ ‚ ‛ 也当单引号定界符，-m 里一对中文引号就能逃出字符串。
 // 引号写成可选是为了把漏写引号的占位符也匹配到并报错，而不是原样留在脚本里运到服务器。
 // libs 是只有部分脚本用的函数文件，不放进 common.ps1，免得挤占 deploy 的 24 KB
-/** 站点下的应用（站点/路径）要多带 app.ps1：这段只有应用用得上，不占别的目标的 24 KB */
-export const targetLibs = (...names: string[]) => (names.some((n) => n.includes('/')) ? ['target', 'app'] : ['target']);
+/** 站点下的应用（站点/路径）要多带 app.ps1，服务要多带 service.ps1：这些只有它们用得上，不占别的目标的 24 KB */
+export const targetLibs = (cfg: Config, ...names: string[]) => [
+  'target',
+  ...(names.some((n) => n.includes('/')) ? ['app'] : []),
+  ...(names.some((n) => Object.hasOwn(cfg.services, n)) ? ['service'] : []),
+];
 
 export function renderScript(name: string, vars: Record<string, string>, libs: string[] = []): string {
   return (COMMON + libs.map(read).join('') + read(name)).replace(/'?__([A-Z0-9_]+)__'?/g, (m, key: string) => {

@@ -1,7 +1,7 @@
 $name = '__NAME__'
 $dir = '__DIR__'
 $work = Join-Path $env:TEMP '__WORK__'
-$exclude = @('__EXCLUDE__' -split "`n" | Where-Object { $_ })
+$exclude = [IO.File]::ReadAllLines("$work\exclude.txt")
 $overwrite = '__OVERWRITE_CONFIG__' -eq 'true'
 $new = Join-Path $work 'new'
 

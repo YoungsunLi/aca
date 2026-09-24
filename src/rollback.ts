@@ -18,7 +18,7 @@ export async function planRollback(cfg: Config, name: string, deployId?: string)
   // 每台服务器按 keep 清理到了哪次发布，没清理过是空串
   const pruned = new Map<string, string>();
   for (const instance of target.instances) {
-    const r = await ecs.runPowerShell(instance, renderScript('backups', targetVars(name, target), [...targetLibs(name), 'inspect']), 120);
+    const r = await ecs.runPowerShell(instance, renderScript('backups', targetVars(name, target), [...targetLibs(cfg, name), 'inspect']), 120);
     if (r.status !== 'Success') throw new Error(`${instance}: failed to list backups: ${r.output.trim() || r.error}`);
     if (r.dropped) throw new Error(`${instance}: Cloud Assistant truncated the backup list by ${r.dropped} bytes; remove old backups before rolling back`);
     // 只认符合格式的行，PowerShell 偶尔混进来的 WARNING 之类不能污染结果
@@ -68,7 +68,7 @@ export async function* rollback(cfg: Config, name: string, deployId?: string): A
     steps.sort((a, b) => Number(weights?.get(b.name) === 0) - Number(weights?.get(a.name) === 0));
     for (const { name: instance, undo } of steps) {
       held.check();
-      const script = renderScript('rollback', { ...targetVars(name, target), DEPLOYS: undo.map((b) => b.deployId).join('\n') }, [...targetLibs(name), 'inspect', 'release', 'tls']);
+      const script = renderScript('rollback', { ...targetVars(name, target), DEPLOYS: undo.map((b) => b.deployId).join('\n') }, [...targetLibs(cfg, name), 'inspect', 'release', 'tls']);
       const r = yield* outOfClb(clb, held, instance, () => ecs.runPowerShell(instance, script, 600));
       if (r.status !== 'Success') throw new Error(`${instance}: rollback failed`);
     }

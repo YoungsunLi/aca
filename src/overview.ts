@@ -16,7 +16,7 @@ export async function overview(cfg: Config): Promise<string[][]> {
   const instances = [...onServer.keys()];
   // 一台服务器查不了（比如关着机）不耽误看别的
   const results = await inParallel(cfg, instances, (instance) => (
-    ecs.runPowerShell(instance, renderScript('overview', { TARGETS: onServer.get(instance)!.map((t) => t.line).join('\n') }, [...targetLibs(...onServer.get(instance)!.map((t) => t.name)), 'inspect', 'newest']), 300).catch((e: Error) => e)
+    ecs.runPowerShell(instance, renderScript('overview', { TARGETS: onServer.get(instance)!.map((t) => t.line).join('\n') }, [...targetLibs(cfg, ...onServer.get(instance)!.map((t) => t.name)), 'inspect', 'newest']), 300).catch((e: Error) => e)
   ));
   const lookups = new Map(instances.map((instance, i) => [instance, lookup(results[i])]));
   return targets.flatMap((t) => t.instances.map((instance) => [t.name, instance, ...lookups.get(instance)!(onServer.get(instance)!.indexOf(t))]));

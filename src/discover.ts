@@ -29,7 +29,7 @@ export async function discover(cfg: Config, names: string[]): Promise<Discovery>
   const failures: string[] = [];
   const found: Found[] = [];
   // 一台查不了（比如云助手客户端离线）不耽误看别的
-  const outputs = await inParallel(cfg, servers.map((s) => s.id), (id) => ecs.runPowerShell(id, renderScript('discover', {}, ['target', 'newest', 'exe']), TIMEOUT).catch((e: Error) => e));
+  const outputs = await inParallel(cfg, servers.map((s) => s.id), (id) => ecs.runPowerShell(id, renderScript('discover', {}, ['target', 'newest', 'service']), TIMEOUT).catch((e: Error) => e));
   for (const [i, r] of outputs.entries()) {
     const { label } = servers[i];
     if (r instanceof Error) failures.push(`${label}: ${r.message.split('\n')[0]}`);

@@ -10,7 +10,7 @@ function Get-AcaBackups($base, $kind = 'bak') {
 }
 # 清单第一行是发布 ID，其余是这次新增的文件，回退时删掉。带标记的行是清单自己的记录，写成服务器上不会有的相对路径，
 # 旧版 aca 回退时当成新增文件去删，找不到就跳过：.aca-excluded\<哈希>\<路径> 是包里被排除的文件的哈希，下次发布拿来比包里那份变没变；
-# .aca-dir\<路径> 是这次发布新建的目录，只有回退用，它自己从 Rest 里挑，不占 check 的 24 KB
+# .aca-dir\<路径> 是这次发布新建的目录，只有回退用，它自己从 Rest 里挑，不占别的命令的 24 KB
 $acaExcludedTag = '.aca-excluded\'
 $acaDirTag = '.aca-dir\'
 function Read-AcaManifest($backup) {

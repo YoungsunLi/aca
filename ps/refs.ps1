@@ -2,11 +2,11 @@ $name = '__NAME__'
 $dir = '__DIR__'
 $checkOnly = '__CHECK_ONLY__' -eq 'true'
 $force = '__FORCE__' -eq 'true'
-$exclude = @('__EXCLUDE__' -split "`n" | Where-Object { $_ })
 $work = Join-Path $env:TEMP '__WORK__'
+$exclude = [IO.File]::ReadAllLines("$work\exclude.txt")
 
-# 按运行时的规则检查发布后的样子：每个强名称引用都解析得到，服务器上装着包要的运行时，程序集的位数和进程对得上。
-# 这些问题站点或服务往往照样启动，要等用到那段代码才报错，发布后的首页检查拦不住
+# 按 .NET Framework 的规则检查发布后的样子：每个强名称引用都解析得到，服务器上装着包要的 .NET Framework，程序集的位数和进程对得上。
+# 这些问题站点或服务往往照样启动，要等用到那段代码才报错，发布后的首页检查拦不住。.NET Core 的运行时由 check 查
 
 function Get-AcaToken($an) { ([BitConverter]::ToString($an.GetPublicKeyToken()) -replace '-').ToLower() }
 function Get-AcaIdentity($an) { New-Object psobject -Property @{ Version = $an.Version; Token = Get-AcaToken $an } }
@@ -81,59 +81,11 @@ function Get-AcaConfigTargets($x) {
     if ($a.Value -match '(\d+(?:\.\d+)+)$') { "$($a.OwnerElement.LocalName) $($a.LocalName)|$($matches[1])" }
   }
 }
-# 和宿主一样按 SemVer 比较 x.y.z[-预览号]：预览版低于同号的正式版；预览号逐段比，数字段按数值比、低于字母段，前面都相同时段多的高
-function Compare-AcaSemver($a, $b) {
-  $x, $xp = $a -split '-', 2
-  $y, $yp = $b -split '-', 2
-  $c = ([version]$x).CompareTo([version]$y)
-  if ($c -or $xp -ceq $yp) { return $c }
-  if (-not $xp) { return 1 }
-  if (-not $yp) { return -1 }
-  $xs = $xp -split '\.'
-  $ys = $yp -split '\.'
-  for ($i = 0; $i -lt $xs.Count -and $i -lt $ys.Count; $i++) {
-    $p = $xs[$i]
-    $q = $ys[$i]
-    $c = if ($p -match '^\d+$' -and $q -match '^\d+$') { ([long]$p).CompareTo([long]$q) } elseif ($p -match '^\d+$') { -1 } elseif ($q -match '^\d+$') { 1 } else { [string]::CompareOrdinal($p, $q) }
-    if ($c) { return $c }
-  }
-  $xs.Count.CompareTo($ys.Count)
-}
-# runtimeconfig.json 要的共享框架里，服务器上按前滚规则找不到的。只能估计：应用跑在几位上、环境变量里的 DOTNET_ROOT、
-# DOTNET_ROLL_FORWARD 都会改变宿主去哪找、认哪个版本，aca 看不全，所以 32 位、64 位两份 dotnet 有一份装着就算，找不到也只提示
-function Get-AcaMissingFrameworks($path, $dotnets) {
-  $o = ([IO.File]::ReadAllText($path) | ConvertFrom-Json).runtimeOptions
-  # 旧写法 rollForwardOnNoCandidateFx：0 只前滚补丁号，1 前滚次版本号，2 前滚主版本号
-  $legacy = @{ '0' = 'LatestPatch'; '1' = 'Minor'; '2' = 'Major' }
-  foreach ($fx in @(@($o.framework) + @($o.frameworks) | Where-Object { $_ })) {
-    $policy = @($fx.rollForward, $o.rollForward, $legacy["$($fx.rollForwardOnNoCandidateFx)"], $legacy["$($o.rollForwardOnNoCandidateFx)"], 'Minor' | Where-Object { $_ })[0]
-    $want = [version]($fx.version -replace '-.*')
-    # 宿主先挑正式版，没有合用的才用预览版，所以两种都算
-    $have = @(Get-ChildItem -LiteralPath @($dotnets | ForEach-Object { "$_\shared\$($fx.name)" }) -Directory -ErrorAction SilentlyContinue | ForEach-Object Name | Where-Object { $_ -match '^\d+\.\d+\.\d+(-.+)?$' } | Sort-Object { [version]($_ -replace '-.*') }, { $_ } -Unique)
-    $ok = @($have | Where-Object {
-      $v = [version]($_ -replace '-.*')
-      $c = Compare-AcaSemver $_ $fx.version
-      $c -ge 0 -and $(if ($policy -eq 'Disable') { $c -eq 0 } elseif ($policy -eq 'LatestPatch') { $v.Major -eq $want.Major -and $v.Minor -eq $want.Minor } elseif ($policy -match 'Major$') { $true } else { $v.Major -eq $want.Major })
-    })
-    if (-not $ok) { "$($fx.name) $($fx.version)$(if ($policy -ne 'Minor') { " (rollForward $policy)" }); this server has $(if ($have) { $have -join ', ' } else { 'none' })" }
-  }
-}
 # .NET Framework 4.5 起每个版本在注册表里 Release 值的下限
 $acaReleases = [ordered]@{ '4.5' = 378389; '4.5.1' = 378675; '4.5.2' = 379893; '4.6' = 393295; '4.6.1' = 394254; '4.6.2' = 394802; '4.7' = 460798; '4.7.1' = 461308; '4.7.2' = 461808; '4.8' = 528040; '4.8.1' = 533320 }
 
 $web = if ($dir) { $null } else { Get-AcaSite $name }
 $root = if ($dir) { Get-AcaServiceRoot $name $dir } else { Get-AcaRoot $web }
-# 放在这里而不在 check：check 带着签名 URL，离 RunCommand 的 24 KB 最近
-if ($web) {
-  $pool = $web.applicationPool
-  # 站点的根应用和站点下的应用都可能用着这个应用池
-  $shared = @(Get-Website | ForEach-Object {
-    $s = $_.name
-    if ($_.applicationPool -eq $pool) { $s }
-    Get-WebApplication -Site $s | Where-Object { $_.applicationPool -eq $pool } | ForEach-Object { "$s$($_.path)" }
-  } | Where-Object { $_ -ne $name })
-  if ($shared) { "NOTE: app pool $pool is shared with $($shared -join ', '), which will also be down for a few seconds" }
-}
 $passed = $false
 try {
   # 运行时只在站点的 bin、服务的目录顶层找程序集，子目录里是附属资源或别的进程用的
@@ -155,24 +107,9 @@ try {
   $afterPath = if (-not $cfgName) { '' } elseif (Test-AcaExcluded $cfgName $exclude) { "$work\config\$cfgName" } else { "$work\new\$cfgName" }
   $afterXml = $beforeXml
   if ($afterPath -and (Test-Path -LiteralPath $afterPath)) { $afterXml = New-Object xml; $afterXml.Load($afterPath) }
-  # 发布后服务器上的那份：包里有、没被排除的是包里那份，否则是服务器上原来那份
-  $afterOf = { param($rel) if ((Test-Path -LiteralPath "$work\new\$rel") -and -not (Test-AcaExcluded $rel $exclude)) { "$work\new\$rel" } elseif (Test-Path -LiteralPath "$root\$rel") { "$root\$rel" } }
   $broken = @(); $lacks = @()
-  # 发布后是 .NET Core 的：站点的 web.config 在根路径上配了 aspNetCore，服务的可执行文件旁边有同名 runtimeconfig.json。
-  # 它按 deps.json 找程序集，目录里的高版本可以顶替引用的低版本，下面按 .NET Framework 的规则解析会误报
-  $handler = if ($web) { Get-AcaCoreHandler $afterXml }
-  if ($handler -or ($exe -and (& $afterOf "$exe.runtimeconfig.json"))) {
-    # 站点的 processPath 是 apphost（.\App.exe），或者是 dotnet、arguments 里是 .\App.dll
-    $pp = if ($handler) { [Environment]::ExpandEnvironmentVariables($handler.GetAttribute('processPath')) }
-    $app = if (-not $handler) { $exe } elseif ($pp -match '([^\\/]+)\.exe$' -and $matches[1] -ne 'dotnet') { $matches[1] } elseif ($handler.GetAttribute('arguments') -match '([^\\/\s"]+)\.dll') { $matches[1] }
-    $rcNew = "$work\new\$app.runtimeconfig.json"; $rcOld = "$root\$app.runtimeconfig.json"
-    # 和服务器上那份一样的，要的运行时原来就要，不是这次发布带来的
-    if ($app -and (Test-Path -LiteralPath $rcNew) -and -not (Test-AcaExcluded "$app.runtimeconfig.json" $exclude) -and -not ((Test-Path -LiteralPath $rcOld) -and (Get-AcaHash ([IO.File]::ReadAllBytes($rcNew))) -eq (Get-AcaHash ([IO.File]::ReadAllBytes($rcOld))))) {
-      # processPath 写了 dotnet.exe 的完整路径，共享框架就只在它旁边找
-      $dotnets = if ($pp -match '\\dotnet\.exe$' -and [IO.Path]::IsPathRooted($pp)) { Split-Path $pp } else { "$env:ProgramFiles\dotnet", "${env:ProgramFiles(x86)}\dotnet" }
-      Get-AcaMissingFrameworks $rcNew $dotnets | ForEach-Object { "WARN $app.runtimeconfig.json in the package asks for $_" }
-    }
-  } else {
+  # check 认出发布后是 .NET Core 时留下它：.NET Core 按 deps.json 找程序集，目录里的高版本可以顶替引用的低版本，下面按 .NET Framework 的规则解析会误报
+  if (-not (Test-Path -LiteralPath "$work\netcore")) {
     $before = @(Get-AcaRedirects $beforeXml)
     $after = @(Get-AcaRedirects $afterXml)
     $binBefore = @{}; $binAfter = @{}; $refs = @(); $targets = @(); $retained = @()
@@ -220,7 +157,7 @@ try {
     $absent | Select-Object -Unique | ForEach-Object { "WARN referenced by the package but found neither in $(if ($web) { 'bin' } else { 'the directory' }) nor in the GAC: $_" }
 
     # 进程的位数：站点看应用池，服务看可执行文件。这次发布换了可执行文件的位数，原来就在的程序集也要重新对一遍
-    $exeAfter = if ($exe) { & $afterOf "$exe.exe" }
+    $exeAfter = if ($exe) { Get-AcaAfter "$exe.exe" "$work\new" $root $exclude }
     $bits = if ($web) { if ((Get-Item -LiteralPath "IIS:\AppPools\$($web.applicationPool)").enable32BitAppOnWin64) { 32 } else { 64 } } elseif ($exeAfter) { Get-AcaExeBits $exeAfter }
     $flipped = $exeAfter -and (Test-Path -LiteralPath "$root\$exe.exe") -and (Get-AcaExeBits "$root\$exe.exe") -ne $bits
     $wrong = @(@($pkg.Values) + $retained | Where-Object { ($_.New -or $flipped) -and $bits -and $_.Bits -and $_.Bits -ne $bits } | ForEach-Object Name)

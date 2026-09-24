@@ -6,7 +6,6 @@ $sha256 = '__SHA256__'
 $message = '__MESSAGE__'
 $keep = [int]'__KEEP__'
 $force = '__FORCE__' -eq 'true'
-$exclude = @('__EXCLUDE__' -split "`n" | Where-Object { $_ })
 
 $web = if ($dir) { $null } else { Get-AcaSite $name }
 $root = if ($dir) { Get-AcaServiceRoot $name $dir } else { Get-AcaRoot $web }
@@ -23,6 +22,7 @@ try {
   # 先加锁：后面算的"新增文件"和备份清单都依赖目标目录此刻的样子，中途被别的发布改了就错了
   $locks = @(Lock-AcaTarget $web $base)
   if (-not (Test-Path -LiteralPath $new)) { throw "The package unpacked by the pre-check is gone ($new); deploy again" }
+  $exclude = [IO.File]::ReadAllLines("$work\exclude.txt")
   $all = @(Get-ChildItem -LiteralPath $new -Recurse -File)
   $files = @($all | Where-Object { -not (Test-AcaExcluded $_.FullName.Substring($new.Length + 1) $exclude) })
   $rels = @($files | ForEach-Object { $_.FullName.Substring($new.Length + 1) })

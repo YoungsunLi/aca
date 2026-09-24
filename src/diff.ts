@@ -45,7 +45,7 @@ async function listFiles(cfg: Config, ecs: Ecs, vars: Record<string, string>, in
     cfg,
     'diff',
     TIMEOUT,
-    (oss) => ecs.runPowerShell(instance, renderScript('diff', { ...vars, ...oss }, [...targetLibs(vars.NAME), 'upload']), TIMEOUT),
+    (oss) => ecs.runPowerShell(instance, renderScript('diff', { ...vars, ...oss }, [...targetLibs(cfg, vars.NAME), 'upload']), TIMEOUT),
     text,
   );
   if (result.status !== 'Success') throw new Error(`${instance}: could not list the files: ${result.output.trim() || result.error}`);
