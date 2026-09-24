@@ -27,8 +27,7 @@ if (Get-Command Get-Website -ErrorAction SilentlyContinue) {
 # 系统、Program Files、ProgramData 里的是 Windows 自己的和装上的软件（云助手客户端、杀毒、数据库），不是自己发布的程序，不列
 $system = @($env:windir, $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData | Where-Object { $_ })
 foreach ($svc in @(Get-WmiObject Win32_Service | Where-Object { $_.PathName })) {
-  # 带引号的 PathName 引号里是可执行文件；不带引号时路径照样能有空格，取到第一个 .exe 为止。有的安装程序写的是正斜杠
-  $exe = $(if ($svc.PathName.StartsWith('"')) { $svc.PathName.Split('"')[1] } else { $svc.PathName -replace '(?i)(\.exe).*$', '$1' }) -replace '/', '\'
+  $exe = Get-AcaExePath $svc.PathName
   if (@($system | Where-Object { $exe.StartsWith($_ + '\', 'OrdinalIgnoreCase') })) { continue }
   try {
     $dir = Split-Path $exe

@@ -12,7 +12,7 @@ import { diff, printDiff } from './diff.ts';
 import { discover, printDiscovery } from './discover.ts';
 import { type Assistant, Ecs, type RunResult } from './ecs.ts';
 import { targetLease } from './lease.ts';
-import { type LogOptions, readLogs } from './logs.ts';
+import { type LogOptions, readEvents, readLogs, type Tail } from './logs.ts';
 import { overview } from './overview.ts';
 import { renderScript, targetLibs } from './ps.ts';
 import { pull } from './pull.ts';
@@ -77,17 +77,11 @@ program.command('pull <instance> <file> [local]').description('Copy a file from 
     if (saved) console.log(`Saved ${saved}`);
   });
 
-program.command('logs <site>').description('Print the IIS log of a site from each of its servers: the latest lines, or the latest lines in a time range; times in the log are UTC')
-  .option('-n, --tail <lines>', 'lines to show from each server', '20')
-  .option('--since <time>', 'start of the time range: a local time like "2026-09-21 10:00", or a duration back from now like 30m, 2h, 1d')
-  .option('--until <time>', 'end of the time range, in the same forms as --since')
-  .action(async (site: string, opts: LogOptions) => {
-    for (const { instance, result, lines } of await readLogs(loadConfig(), site, opts)) {
-      console.log(`== ${instance}`);
-      report(result);
-      if (lines) console.log(lines.trimEnd());
-    }
-  });
+tailOptions(program.command('logs <site>').description('Print the IIS log of a site from each of its servers: the latest lines, or the latest lines in a time range; times in the log are UTC'), 'lines')
+  .action(async (site: string, opts: LogOptions) => printTail(await readLogs(loadConfig(), site, opts)));
+
+tailOptions(program.command('events <target>').description('Print the Windows events about a site or service from each of its servers: app pool crashes, recycles and rapid-fail stops, ASP.NET and ASP.NET Core errors, service stops, crashes and startup failures; the latest events, or the latest in a time range; times are the server\'s local time'), 'events')
+  .action(async (name: string, opts: LogOptions) => printTail(await readEvents(loadConfig(), name, opts)));
 
 program.command('deploy <target> [path]').description('Deploy a directory or zip to a configured IIS site or Windows service: pre-check every server, then deploy one server at a time; path defaults to its publish directory')
   .option('-c, --check', 'upload and pre-check every server only: list the files to overwrite and add, without stopping the site or service')
@@ -217,6 +211,20 @@ function assertGbk(script: string) {
     if (!c) continue;
     const hex = c.codePointAt(0)!.toString(16).toUpperCase();
     throw new Error(`Line ${i + 1} of the script has "${c}" (U+${hex.padStart(4, '0')}), which is not in GBK: on servers whose system locale is not English (United States), Cloud Assistant converts the script to GBK and runs an empty script when a character does not convert. Write it as [char]::ConvertFromUtf32(0x${hex})`);
+  }
+}
+
+function tailOptions(cmd: Command, unit: string): Command {
+  return cmd.option(`-n, --tail <${unit}>`, `${unit} to show from each server`, '20')
+    .option('--since <time>', 'start of the time range: a local time like "2026-09-21 10:00", or a duration back from now like 30m, 2h, 1d')
+    .option('--until <time>', 'end of the time range, in the same forms as --since');
+}
+
+function printTail(results: Tail) {
+  for (const { instance, result, lines } of results) {
+    console.log(`== ${instance}`);
+    report(result);
+    if (lines) console.log(lines.trimEnd());
   }
 }
 

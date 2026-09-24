@@ -100,7 +100,7 @@ IIS 里挂在站点下的应用程序（IIS 管理器里"添加应用程序"建�
 | 产品 | 权限 |
 | --- | --- |
 | ECS | `ecs:DescribeInstances`、`ecs:DescribeCloudAssistantStatus`（没有它 `aca instances` 看不到云助手客户端的状态）、`ecs:RunCommand`、`ecs:DescribeInvocationResults` |
-| OSS | `oss:PutObject`、`oss:GetObject`、`oss:ListObjects`、`oss:GetBucketPolicyStatus`、`oss:DeleteObject`；bucket 开了版本控制时，`pull`、`logs`、`diff` 和 `certs replace` 删 OSS 上中转的文件要 `oss:DeleteObjectVersion` |
+| OSS | `oss:PutObject`、`oss:GetObject`、`oss:ListObjects`、`oss:GetBucketPolicyStatus`、`oss:DeleteObject`；bucket 开了版本控制时，`pull`、`logs`、`events`、`diff` 和 `certs replace` 删 OSS 上中转的文件要 `oss:DeleteObjectVersion` |
 | CLB | 站点配了 `clb` 时要：`slb:DescribeLoadBalancerAttribute`、`slb:DescribeLoadBalancerListeners`、`slb:DescribeHealthStatus`、`slb:SetBackendServers` |
 | 数字证书管理服务 | 取云端证书时要：`yundun-cert:ListUserCertificateOrder`、`yundun-cert:GetUserCertificateDetail`；这个服务只支持操作级授权，资源只能写 `*` |
 
@@ -141,6 +141,8 @@ aca run web1 --file ./check.ps1                 # 执行文件里的脚本，带
 aca pull web1 "C:\inetpub\logs\LogFiles\W3SVC1\u_ex260919.log"  # 把服务器上的文件拉到本机当前目录
 aca logs "Default Web Site"                     # 每台服务器上这个站点最新的 20 行 IIS 日志
 aca logs "Default Web Site" --since 30m -n 500  # 最近 30 分钟里最新的 500 行
+aca events "Default Web Site"                   # 每台服务器上和这个站点有关的最新 20 条 Windows 事件
+aca events MyApp.Worker --since 2h              # 最近 2 小时里这个服务的事件
 aca diff "Default Web Site"                     # 按内容哈希比对每台服务器上的文件，列出不一样的
 aca diff "Default Web Site" bin                 # 只比站点目录下的一个目录
 ```
@@ -212,6 +214,17 @@ aca 按 IIS 里站点的日志设置，在每台服务器上找到这个站点�
 - **日志里的时间是 UTC**：IIS 的 W3C 格式就这样记，aca 原样输出，只把 `--since`、`--until` 换算成 UTC 去比。
 - **刚发生的请求也读得到**：HTTP.sys 攒着日志过一会儿才写盘，aca 读之前先让它写下去。
 - **只读 W3C 格式**（IIS 的默认格式）；取到的行经 OSS 中转，和 `aca pull` 一样加密、读完就删。
+
+### `aca events`
+
+站点报 503、应用池自己停了、服务意外停止或起不来，原因多半记在 Windows 事件日志里。`aca events <站点或服务>` 在每台服务器上从系统日志和应用程序日志里挑出和它有关的事件，取最新的 `-n` 条（默认 20），`--since`、`--until` 的写法和 `aca logs` 一样。
+
+- **站点看它应用池的 WAS 事件**（进程崩溃、没响应、回收，被快速失败保护停掉），**以及写着这个应用的 ASP.NET、ASP.NET Core 模块事件**（没处理的异常、启动失败、缺运行时）；共用应用池的别的站点的事件不列。
+- **服务看服务控制管理器里它的事件**（停止、意外终止、启动失败），**以及它自己记的事件**（来源是服务名或程序名）。
+- **崩溃详情按进程认**：.NET Runtime（异常和调用栈）、Application Error（出错模块、异常代码）、IIS 工作进程的事件，只列这个应用池或服务的进程记下的，ASP.NET Core 进程外托管时也包括它的后端进程；服务按可执行文件的完整路径认，别的目录里同名的程序崩溃不算。
+- **Server 2019 及更早的系统上，.NET 应用记在 .NET Runtime 来源下的日志列不出来**：这些系统上经典格式的事件不记进程 ID，.NET Runtime 的事件只有崩溃那条能按程序名和时间对上 Application Error。
+- **时间是服务器的本地时间**：第一行写明时区，以及两个日志各自最早的记录；日志写满后旧事件被覆盖，比这更早的已经查不到了。
+- **事件经 OSS 中转**，和 `aca pull` 一样加密、读完就删。
 
 ### `aca diff`
 

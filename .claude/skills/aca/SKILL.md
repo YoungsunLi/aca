@@ -11,7 +11,7 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
 
 云助手以 SYSTEM 身份执行，用 `aca run` 就等于拿到生产机的管理员 shell，其它命令也都跑在这个权限上。
 
-- 不改站点和服务的直接做：`instances`、`discover`、`sites`、`services`、`status`、`logs`、`diff`、`certs`、`certs cloud`、`clb`、`pull`、各命令的 `--check`，以及 `aca run` 里只查询不改动的脚本。
+- 不改站点和服务的直接做：`instances`、`discover`、`sites`、`services`、`status`、`logs`、`events`、`diff`、`certs`、`certs cloud`、`clb`、`pull`、各命令的 `--check`，以及 `aca run` 里只查询不改动的脚本。
 - 会改服务器的只在用户本轮明确要求时做：`deploy`、`rollback` 按下面的发布流程确认；
   `clb restore` 会让负载均衡重新把请求转给这台服务器，先确认它上面的站点正常，用户同意后再放回；
   `certs replace` 先 `--check`，把每台服务器要换的条目和条目上的站点给用户看，确认后再换；
@@ -48,6 +48,11 @@ description: 用 aca CLI 管理阿里云 ECS（Windows Server）并把站点发�
   时间段里可能还有更早的行时输出 `Showing the last <N> lines in the time range`，要看全就加大 `-n`。每行几百字节，行多时用 grep 筛状态码、URL，别整段读。
   日志里的时间是 UTC，和用户说的时间对照前先换算。每台服务器先列出读了哪几个日志文件，要整个文件用 `aca pull`。
   报 `IIS logging is off for this site` 的服务器没在记这个站点的日志，读到的是关日志之前的旧行，不能据此判断它有没有收到请求
+- `aca events <站点或服务> [-n 条数] [--since 时间] [--until 时间]` — 每台服务器的系统日志、应用程序日志里和这个站点或服务有关的事件，取最新的 `-n` 条（默认 20），时间段写法同 `aca logs`。
+  站点报 503、应用池自己停了、站点起不来、服务意外停止或起不来时先看它：WAS 5002 是应用池被快速失败保护停了（之后的请求都是 503，IIS 日志里没有），
+  5009、5011 是工作进程崩溃，紧挨着的 ASP.NET 1325、.NET Runtime 1026、Application Error 1000 是这次崩溃的异常、调用栈和出错模块；ASP.NET Core 模块的事件说明启动失败的原因（如缺运行时）；
+  服务看服务控制管理器的 7031、7034（意外终止）和 7000、7009（启动失败）。ASP.NET 1309 是请求里没处理的异常，扫描器的非法路径也会刷出一大片，挤掉别的事件时用 `--since`、`--until` 缩小范围。
+  时间是服务器本地时间，不是 UTC。第一行写着两个日志各自最早的记录，要找的时间比它早就查不到了，不能据此说那时没出事
 - `aca deploy <站点或服务> [目录或 zip] --check` — 上传并在每台服务器上预检查，打印将覆盖/新增的文件，不停站点也不停服务
 - `aca deploy <站点或服务> [目录或 zip] -m "<说明>"` — 先在每台服务器上预检查，都通过后按配置里的服务器顺序逐台停、备份、覆盖、启。
   路径省略时用配置里 `publish` 字段的目录。`-m` 写进服务器上的发布记录，作为这次发布的标识，

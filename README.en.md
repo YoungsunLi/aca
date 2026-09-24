@@ -100,7 +100,7 @@ Credentials are resolved by the Alibaba Cloud SDK's [default credential chain](h
 | Product | Permissions |
 | --- | --- |
 | ECS | `ecs:DescribeInstances`, `ecs:DescribeCloudAssistantStatus` (without it `aca instances` can't show the state of the Cloud Assistant client), `ecs:RunCommand`, `ecs:DescribeInvocationResults` |
-| OSS | `oss:PutObject`, `oss:GetObject`, `oss:ListObjects`, `oss:GetBucketPolicyStatus`, `oss:DeleteObject`; on a versioned bucket, `pull`, `logs`, `diff` and `certs replace` need `oss:DeleteObjectVersion` to delete the files they pass through OSS |
+| OSS | `oss:PutObject`, `oss:GetObject`, `oss:ListObjects`, `oss:GetBucketPolicyStatus`, `oss:DeleteObject`; on a versioned bucket, `pull`, `logs`, `events`, `diff` and `certs replace` need `oss:DeleteObjectVersion` to delete the files they pass through OSS |
 | CLB | For sites with `clb`: `slb:DescribeLoadBalancerAttribute`, `slb:DescribeLoadBalancerListeners`, `slb:DescribeHealthStatus`, `slb:SetBackendServers` |
 | Certificate Management Service | To take certificates from the cloud: `yundun-cert:ListUserCertificateOrder`, `yundun-cert:GetUserCertificateDetail`; the service authorizes per operation, so the resource can only be `*` |
 
@@ -141,6 +141,8 @@ aca run web1 --file ./check.ps1                 # run the script in a file, for 
 aca pull web1 "C:\inetpub\logs\LogFiles\W3SVC1\u_ex260919.log"  # copy a file from a server to the current directory
 aca logs "Default Web Site"                     # the latest 20 lines of the site's IIS log on each server
 aca logs "Default Web Site" --since 30m -n 500  # the latest 500 lines of the last 30 minutes
+aca events "Default Web Site"                   # the latest 20 Windows events about the site on each server
+aca events MyApp.Worker --since 2h              # the service's events of the last 2 hours
 aca diff "Default Web Site"                     # compare the files on every server by content hash and list the ones that differ
 aca diff "Default Web Site" bin                 # compare one directory under the site directory only
 ```
@@ -212,6 +214,17 @@ aca finds the site's log files on each server from the site's logging settings i
 - **Times in the log are UTC**: that is how the IIS W3C format records them; aca prints the lines as they are and converts only `--since` and `--until` to UTC to compare.
 - **Requests from a moment ago are there too**: HTTP.sys holds log entries for a while before writing them, and aca has it write them out before reading.
 - **Only the W3C format** (the IIS default) is read; the lines go through OSS, encrypted and deleted after reading, like `aca pull`.
+
+### `aca events`
+
+When a site returns 503, an app pool stops on its own, or a service stops unexpectedly or fails to start, the reason is usually in the Windows event logs. `aca events <site or service>` picks the events about it out of the System and Application logs on each server and prints the latest `-n` (20 by default); `--since` and `--until` take the same forms as for `aca logs`.
+
+- **For a site, the WAS events of its app pool** (worker processes crashing, not responding, recycling, the pool stopped by rapid-fail protection), **and the ASP.NET and ASP.NET Core Module events that name this application** (unhandled exceptions, startup failures, a missing runtime); events of other sites sharing the app pool are left out.
+- **For a service, its events from the Service Control Manager** (stops, unexpected terminations, startup failures), **and the events it logs itself** (under the service name or the program name as the source).
+- **Crash details go by process**: .NET Runtime (the exception and stack trace), Application Error (faulting module, exception code) and IIS worker process events are listed only when a process of this app pool or service logged them, including the backend process of an out-of-process ASP.NET Core application; a service goes by the full path of its executable, so a program of the same name in another directory does not count.
+- **On Server 2019 and earlier, the logs a .NET application writes under the .NET Runtime source are not listed**: classic-format events on these systems carry no process ID, and only the .NET Runtime event of a crash can be matched to its Application Error, by program name and time.
+- **Times are the server's local time**: the first line gives the time zone and how far back each of the two logs goes; once a log is full, older events are overwritten and cannot be found any more.
+- **The events go through OSS**, encrypted and deleted after reading, like `aca pull`.
 
 ### `aca diff`
 
