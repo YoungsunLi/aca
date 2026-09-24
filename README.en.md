@@ -218,7 +218,7 @@ aca finds the site's log files on each server from the site's logging settings i
 When the servers behind a load balancer hold different files, the site works on one refresh and fails on the next. `aca diff <site or service>` hashes the files on every server and lists the ones that are not the same everywhere.
 
 - **It compares every file under the site directory** (for a service, under `dir` from the config), except the paths in `exclude`: those are maintained on the server and are meant to differ. List upload and log directories in `exclude` too and they are skipped as well. Directory junctions are not followed; hidden files are compared.
-- **For a service only `.dll` and `.exe` are compared**: a service keeps its assemblies in the same directory as the logs it writes every day.
+- **For a service only `.dll`, `.exe` and the .NET Core `*.runtimeconfig.json` and `*.deps.json` are compared**: a service keeps its assemblies in the same directory as the logs it writes every day.
 - **One line per file that differs**, followed by the servers grouped by content (`web1,web2=<first 8 hash characters> <last write time>`); a server without the file shows `missing`. aca exits non-zero when any differ.
 - **Beyond 50 differing files, the first 50 are followed by a per-directory summary**: see which directories they fall into, then narrow the comparison with `aca diff <site> <directory or file>`, for example `aca diff "Default Web Site" bin`. A server without that directory counts as missing every file in it.
 - **Every server reads its whole directory to hash it**, which takes minutes on a directory of a few GB, and Cloud Assistant kills the script after 30 minutes. The script runs at `BelowNormal` priority so it loses the CPU to the IIS worker processes.

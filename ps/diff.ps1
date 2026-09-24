@@ -26,8 +26,8 @@ function Get-AcaFiles($path) {
 }
 # 这台服务器上没有指定的这个目录或文件，多半就是漏发了：当成全缺，交给本机比对，不是错误
 $files = if ($sub -and -not (Test-Path -LiteralPath $scope)) { @() } else { @(Get-AcaFiles $scope) }
-# 服务的程序集和它天天写的日志在同一个目录里，日志各台服务器本来就不一样
-if (-not $web) { $files = @($files | Where-Object { $_.Extension -match '^\.(dll|exe)$' }) }
+# 服务的目录里还有它天天写的日志，每台服务器上的本来就不一样，所以只比决定跑什么代码的文件
+if (-not $web) { $files = @($files | Where-Object { $_.Name -match '\.(dll|exe|runtimeconfig\.json|deps\.json)$' }) }
 $sha = [Security.Cryptography.SHA256]::Create()
 $list = New-Object Text.StringBuilder
 foreach ($f in $files) {
