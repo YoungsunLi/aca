@@ -52,14 +52,14 @@ if ($web) {
   # 两样都没写的，ASP.NET Core 模块会写应用目录本身或目录里的文件（App: <目录>\App.dll）；更深一层的是子目录
   $rootFile = '(?i)' + [regex]::Escape("$(Get-AcaRoot $web)\") + '[^\\''"\r\n]*([''"\r\n]|$)'
 } else {
-  $svc = @(Get-WmiObject Win32_Service | Where-Object { $_.Name -eq $name })[0]
+  $svc = Get-AcaWmiService $name
   if (-not $svc) { throw "Windows service not found: $name" }
   $exe = Get-AcaExePath $svc.PathName
   # 服务控制管理器的事件里写的多是显示名，有的写服务名
   $display = $svc.DisplayName
   $system = @(foreach ($e in @(Read-AcaEvents System (Format-AcaQuery 'Service Control Manager' $window) $true)) { $v = @(Get-AcaValues $e); if ($v -contains $name -or $v -contains $display) { $e } })
   # 服务自己记的事件：ServiceBase 的 AutoLog 用服务名作来源，.NET 的 EventLog 日志默认用程序名
-  $sources = $name, [IO.Path]::GetFileNameWithoutExtension($exe)
+  $sources = $name, [IO.Path]::GetFileNameWithoutExtension((Get-AcaProgram $svc.PathName))
   $providers = @('.NET Runtime', 'Application Error') + $sources
   $procs = @(if ($svc.ProcessId) { Get-WmiObject Win32_Process -Filter "ProcessId=$($svc.ProcessId)" })
 }
@@ -72,7 +72,11 @@ function Test-AcaOwn($e) {
     if ($text -match '/LM/W3SVC/\d+/ROOT|MACHINE/WEBROOT/APPHOST/') { return $text -match $appId }
     if ($text -match $rootFile) { return $true }
   } elseif ($sources -contains $e.ProviderName) { return $true }
-  elseif ($e.ProviderName -eq 'Application Error') { return "$($e.Properties[10].Value)" -eq $exe }
+  elseif ($e.ProviderName -eq 'Application Error') {
+    if ("$($e.Properties[10].Value)" -ne $exe) { return $false }
+    # 用 dotnet.exe 启动的，别的 .NET 程序崩溃时记的也是它：前后一分钟里服务控制管理器报了这个服务意外终止（7031、7034）的才算，其余再看是哪个进程
+    if ((Get-AcaProgram $svc.PathName) -eq $exe -or @($system | Where-Object { (7031, 7034 -contains $_.Id) -and [Math]::Abs(($_.TimeCreated - $e.TimeCreated).TotalMinutes) -le 1 })) { return $true }
+  }
 }
 if ($web) {
   # ASP.NET Core 进程外托管时，应用跑在 w3wp 起的后端进程里，它的崩溃不写应用。从模块报它启动，到报它关掉或 Application Error 报它崩溃，

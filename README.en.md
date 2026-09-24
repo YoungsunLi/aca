@@ -80,7 +80,7 @@ The keys of `sites` are IIS site names, with an application under a site written
 | `clb` | ID of the Classic Load Balancer (CLB) instance in front of the site: before `deploy` or `rollback` works on each server, aca takes it out of the load balancer; see `aca deploy` |
 | `project`<br>`note` | Only shown by `aca sites` and `aca services`, to help find the right site or service |
 
-The keys of `services` are Windows service names (the ones `sc query` lists, not the display names). The fields are the same as for a site, without `stage` and `clb`, plus a required `dir`: the installation directory on the servers; aca checks that the service's executable really is inside it and refuses to deploy otherwise.
+The keys of `services` are Windows service names (the ones `sc query` lists, not the display names). The fields are the same as for a site, without `stage` and `clb`, plus a required `dir`: the installation directory on the servers; aca checks that the program the service runs (its executable, or for a service started by `dotnet.exe`, the `.dll` after it) really is inside it and refuses to deploy otherwise.
 
 ### Applications under a site
 
@@ -181,7 +181,7 @@ aca certs replace --from-cloud 22863954         # switch to that cloud certifica
 aca lists the IIS sites and Windows services on the servers, and ends with a config draft to fill the config from. Without servers, it covers every running Windows server in the region.
 
 - **One line per site or service**: its state, directory and newest file time; a site adds its app pool, bitness, runtime and first three bindings, a service its start mode and command line.
-- **Only services installed outside the Windows, Program Files and ProgramData directories are listed**: the ones in there are Windows's own and installed software (the Cloud Assistant client, antivirus, databases), not programs you deploy yourself.
+- **Only services installed outside the Windows, Program Files and ProgramData directories are listed**: the ones in there are Windows's own and installed software (the Cloud Assistant client, antivirus, databases), not programs you deploy yourself. For a service started by `dotnet.exe`, where the `.dll` after it lives is what counts.
 - **The draft takes only what the config doesn't have yet**: running sites, and services that aren't disabled. Servers go by their alias in the config, or by instance name if they have none.
 - **A `NOTE` line comes when a site or service's newest file on one server is more than a day older than on another**: the copy on that server may be long out of use; make sure before adding it to the config or deploying there.
 - **A server that can't be looked at** (for example with its Cloud Assistant client offline) doesn't hold up the others; aca reports it at the end and exits non-zero.
@@ -223,7 +223,7 @@ When a site returns 503, an app pool stops on its own, or a service stops unexpe
 
 - **For a site, the WAS events of its app pool** (worker processes crashing, not responding, recycling, the pool stopped by rapid-fail protection), **and the ASP.NET and ASP.NET Core Module events that name this application** (unhandled exceptions, startup failures, a missing runtime); events of other sites sharing the app pool are left out.
 - **For a service, its events from the Service Control Manager** (stops, unexpected terminations, startup failures), **and the events it logs itself** (under the service name or the program name as the source).
-- **Crash details go by process**: .NET Runtime (the exception and stack trace), Application Error (faulting module, exception code) and IIS worker process events are listed only when a process of this app pool or service logged them, including the backend process of an out-of-process ASP.NET Core application; a service goes by the full path of its executable, so a program of the same name in another directory does not count.
+- **Crash details go by process**: .NET Runtime (the exception and stack trace), Application Error (faulting module, exception code) and IIS worker process events are listed only when a process of this app pool or service logged them, including the backend process of an out-of-process ASP.NET Core application; a service goes by the full path of its executable, so a program of the same name in another directory does not count. When a service started by `dotnet.exe` crashes, Application Error records dotnet.exe, which doesn't tell the programs apart, so aca checks whether the Service Control Manager reported this service terminating unexpectedly at the same time.
 - **On Server 2019 and earlier, the logs a .NET application writes under the .NET Runtime source are not listed**: classic-format events on these systems carry no process ID, and only the .NET Runtime event of a crash can be matched to its Application Error, by program name and time.
 - **Times are the server's local time**: the first line gives the time zone and how far back each of the two logs goes; once a log is full, older events are overwritten and cannot be found any more.
 - **The events go through OSS**, encrypted and deleted after reading, like `aca pull`.

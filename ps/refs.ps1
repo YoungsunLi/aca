@@ -91,7 +91,7 @@ try {
   # 运行时只在站点的 bin、服务的目录顶层找程序集，子目录里是附属资源或别的进程用的
   $sub = if ($web) { '\bin' } else { '' }
   $exe = if (-not $web) {
-    $cmd = @(Get-WmiObject Win32_Service | Where-Object { $_.Name -eq $name })[0].PathName
+    $cmd = (Get-AcaWmiService $name).PathName
     if ($cmd -match ('^"?' + [regex]::Escape($root) + '\\([^\\"]+?)\.exe')) { $matches[1] }
   }
   # 管绑定的是站点的 web.config、服务可执行文件的 .config

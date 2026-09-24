@@ -27,10 +27,10 @@ if (Get-Command Get-Website -ErrorAction SilentlyContinue) {
 # 系统、Program Files、ProgramData 里的是 Windows 自己的和装上的软件（云助手客户端、杀毒、数据库），不是自己发布的程序，不列
 $system = @($env:windir, $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData | Where-Object { $_ })
 foreach ($svc in @(Get-WmiObject Win32_Service | Where-Object { $_.PathName })) {
-  $exe = Get-AcaExePath $svc.PathName
-  if (@($system | Where-Object { $exe.StartsWith($_ + '\', 'OrdinalIgnoreCase') })) { continue }
+  $program = Get-AcaProgram $svc.PathName
+  if (@($system | Where-Object { $program.StartsWith($_ + '\', 'OrdinalIgnoreCase') })) { continue }
   try {
-    $dir = Split-Path $exe
+    $dir = Split-Path $program
     # 盘符根 aca 不认，也别去整盘找最新文件
     $mine = $svc.StartMode -ne 'Disabled' -and $dir -match '^[a-zA-Z]:\\[^\\]'
     Out-AcaRow service $svc.Name $svc.State $dir $(if ($mine) { Format-AcaNewest $null $dir }) "$($svc.StartMode) start; $($svc.PathName)" $mine

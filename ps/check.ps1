@@ -64,7 +64,7 @@ function Read-AcaRuntimeConfig($app, $apphost, $of) {
   $t = if ($exe) { Read-AcaBundled $exe }
   if ($t) { $t } elseif ($json) { [IO.File]::ReadAllText($json) }
 }
-# 发布后是 .NET Core 的：站点的 web.config 在根路径上配了 aspNetCore，服务的可执行文件带着 runtimeconfig.json。
+# 发布后是 .NET Core 的：站点的 web.config 在根路径上配了 aspNetCore，服务跑的程序带着 runtimeconfig.json。
 # 是的话留下 netcore，再列出包要的共享框架里服务器上找不到的
 function Invoke-AcaCoreCheck($web, $name, $root, $new, $exclude, $work) {
   if ($web) {
@@ -79,9 +79,13 @@ function Invoke-AcaCoreCheck($web, $name, $root, $new, $exclude, $work) {
       $apphost = $pp -match '([^\\/]+)\.exe$' -and $matches[1] -ne 'dotnet'
       $app = if ($apphost) { $matches[1] } elseif ($handler.GetAttribute('arguments') -match '([^\\/\s"]+)\.dll') { $matches[1] }
     }
-  } elseif (@(Get-WmiObject Win32_Service | Where-Object { $_.Name -eq $name })[0].PathName -match ('^"?' + [regex]::Escape($root) + '\\([^\\"]+?)\.exe')) {
-    $app = $matches[1]
-    $apphost = $true
+  } else {
+    $cmd = (Get-AcaWmiService $name).PathName
+    $pp = Get-AcaExePath $cmd
+    if ((Get-AcaProgram $cmd) -match ('^' + [regex]::Escape($root) + '\\([^\\]+)\.(exe|dll)$')) {
+      $app = $matches[1]
+      $apphost = $matches[2] -eq 'exe'
+    }
   }
   $rc = if ($app) { Read-AcaRuntimeConfig $app $apphost { param($rel) Get-AcaAfter $rel $new $root $exclude } }
   if (-not ($handler -or $rc)) { return }
@@ -89,7 +93,7 @@ function Invoke-AcaCoreCheck($web, $name, $root, $new, $exclude, $work) {
   New-Item -ItemType File -Path "$work\netcore" | Out-Null
   # 和服务器上那份一样的，要的运行时原来就要，不是这次发布带来的
   if ($rc -and $rc -cne (Read-AcaRuntimeConfig $app $apphost { param($rel) if (Test-Path -LiteralPath "$root\$rel") { "$root\$rel" } })) {
-    # processPath 写了 dotnet.exe 的完整路径，共享框架就只在它旁边找
+    # 站点的 processPath、服务的命令行写了 dotnet.exe 的完整路径，共享框架就只在它旁边找
     $dotnets = if ($pp -match '\\dotnet\.exe$' -and [IO.Path]::IsPathRooted($pp)) { Split-Path $pp } else { "$env:ProgramFiles\dotnet", "${env:ProgramFiles(x86)}\dotnet" }
     Get-AcaMissingFrameworks $rc $dotnets | ForEach-Object { "WARN $app.runtimeconfig.json in the package asks for $_" }
   }
