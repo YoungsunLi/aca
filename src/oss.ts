@@ -77,16 +77,18 @@ export async function signForEcs(cfg: Config, objectName: string, expires: numbe
   return new OSS({ ...await options(cfg), internal: true }).signatureUrl(objectName, { expires, method });
 }
 
+export type OssVars = { URL: string; KEY: string; IV: string };
+
 /**
  * 云助手的输出有上限，服务器上大块的内容经 OSS 回本机：脚本用 aca 这次生成的一次性密钥加密后上传，
  * aca 下载解密再把对象删掉，bucket 被别人读到也看不到内容。kind 是对象名里的一段，认得出是哪个命令传的。
- * 脚本没跑成时不返回 got
+ * 脚本没跑成、也没传上来时不返回 got
  */
 export async function viaOss<T>(
   cfg: Config,
   kind: string,
   expires: number,
-  run: (vars: { URL: string; KEY: string; IV: string }) => Promise<RunResult>,
+  run: (vars: OssVars) => Promise<RunResult>,
   read: (stream: Readable) => Promise<T>,
 ): Promise<{ result: RunResult; got?: T }> {
   const key = randomBytes(32);
@@ -95,15 +97,23 @@ export async function viaOss<T>(
   let versionId: string | undefined;
   try {
     const result = await run({ URL: await signForEcs(cfg, objectName, expires, 'PUT'), KEY: key.toString('base64'), IV: iv.toString('base64') });
-    if (result.status !== 'Success') return { result };
-    const got = await download(cfg, objectName);
-    versionId = got.versionId;
-    const plain = got.stream.pipe(createDecipheriv('aes-256-cbc', key, iv));
-    // pipe 不把两头的下场连起来：下载断了要让读的那头收到错误，否则它一直等；
-    // 读的那头出错（比如本地盘满了）要断掉下载，否则连接挂着，命令跑完也退不出来
-    got.stream.on('error', (e: Error) => plain.destroy(e));
-    plain.on('close', () => got.stream.destroy());
-    return { result, got: await read(plain) };
+    try {
+      // aca run -o 在 finally 里上传，脚本失败时失败前的输出也在
+      if (result.status !== 'Success' && !await exists(cfg, objectName)) return { result };
+      const got = await download(cfg, objectName);
+      versionId = got.versionId;
+      const plain = got.stream.pipe(createDecipheriv('aes-256-cbc', key, iv));
+      // pipe 不把两头的下场连起来：下载断了要让读的那头收到错误，否则它一直等；
+      // 读的那头出错（比如本地盘满了）要断掉下载，否则连接挂着，命令跑完也退不出来
+      got.stream.on('error', (e: Error) => plain.destroy(e));
+      plain.on('close', () => got.stream.destroy());
+      return { result, got: await read(plain) };
+    } catch (e) {
+      // 失败前的输出是顺带取的，取不回也不能让 OSS 的错误盖掉脚本自己的结果
+      if (result.status === 'Success') throw e;
+      console.error(`WARN: could not fetch the output the script sent to OSS before failing: ${(e as Error).message}`);
+      return { result };
+    }
   } finally {
     // 脚本失败或轮询出错时也删一次：服务器那边可能已经传上去了
     await remove(cfg, objectName, versionId).catch((e: Error) => console.error(`WARN: could not delete ${objectName} from OSS: ${e.message}`));

@@ -1,6 +1,6 @@
 {
   "name": "@ninesols/aca-cli",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "通过阿里云云助手在 Windows ECS 上自动发布 IIS 站点和 Windows 服务，也能回退、执行 PowerShell、检查和更换 SSL 证书，附带 Agent Skill 供 Claude Code、Codex 等 AI Agent 调用",
   "keywords": [
     "agent-skills",

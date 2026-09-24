@@ -14,8 +14,8 @@ import { type Assistant, Ecs, type RunResult } from './ecs.ts';
 import { targetLease } from './lease.ts';
 import { type LogOptions, readEvents, readLogs, type Tail } from './logs.ts';
 import { overview } from './overview.ts';
-import { renderScript, targetLibs } from './ps.ts';
-import { pull } from './pull.ts';
+import { renderBare, renderScript, targetLibs } from './ps.ts';
+import { pull, type Saved, save } from './pull.ts';
 import { planRollback, printPlan, rollback } from './rollback.ts';
 
 const program = new Command('aca').description('Run PowerShell on Windows ECS instances and deploy or roll back IIS sites and Windows services through Alibaba Cloud Cloud Assistant')
@@ -60,22 +60,21 @@ program.command('services').description('List configured Windows services with t
 program.command('run <instance> [script]').description('Run PowerShell on a server (instance ID or alias from the config) and wait for its output')
   .option('--file <path>', 'read the script from a UTF-8 file instead: on the command line, the local shell may rewrite its $, quotes and line breaks')
   .option('-t, --timeout <sec>', 'seconds before Cloud Assistant kills the script and the processes it started', '300')
-  .action(async (instance: string, inline: string | undefined, opts: { file?: string; timeout: string }) => {
+  .option('-o, --output <file>', 'save what the script outputs to this new local file through OSS instead of printing it, free of the Cloud Assistant output limit; errors, warnings and Write-Host still print')
+  .action(async (instance: string, inline: string | undefined, opts: { file?: string; timeout: string; output?: string }) => {
     const timeout = Number(opts.timeout);
     if (!Number.isInteger(timeout) || timeout <= 0) throw new Error(`--timeout must be a positive integer of seconds, got "${opts.timeout}"`);
     if ((inline === undefined) === (opts.file === undefined)) throw new Error('Give the script either as an argument or with --file');
     const script = inline ?? readUtf8(opts.file!);
     assertGbk(script);
+    const cfg = loadConfig();
     // 放进子作用域：否则前缀里兜底的 trap 会抢在用户自己的 trap 之前接住异常
-    report(await new Ecs(loadConfig()).runPowerShell(instance, `& {\n${script}\n}`, timeout));
+    if (opts.output) reportSaved(await save(cfg, instance, opts.output, 'run', timeout, (vars) => `$acaScript = {\n${script}\n}\n${renderBare('output', vars, ['upload'])}`));
+    else report(await new Ecs(cfg).runPowerShell(instance, `& {\n${script}\n}`, timeout), '; if the script only reads, run it again with --output <file> to save all of it');
   });
 
 program.command('pull <instance> <file> [local]').description('Copy a file from a server (instance ID or alias from the config) to this machine through OSS, free of the Cloud Assistant output limit; local defaults to the current directory, and an existing local file is never overwritten')
-  .action(async (instance: string, file: string, local = '.') => {
-    const { result, saved } = await pull(loadConfig(), instance, file, local);
-    report(result);
-    if (saved) console.log(`Saved ${saved}`);
-  });
+  .action(async (instance: string, file: string, local = '.') => reportSaved(await pull(loadConfig(), instance, file, local)));
 
 tailOptions(program.command('logs <site>').description('Print the IIS log of a site from each of its servers: the latest lines, or the latest lines in a time range; times in the log are UTC'), 'lines')
   .option('--httperr', 'read the lines of the site in the HTTP.sys error log instead: requests that never reached IIS, answered with an error or dropped by HTTP.sys itself, such as the 503s after the app pool stops; needs --since')
@@ -236,13 +235,19 @@ async function reportEach(results: AsyncIterable<[string, RunResult]>) {
   }
 }
 
-function report(r: RunResult) {
+function report(r: RunResult, hint = '') {
+  // 写在输出前面：输出被转存进文件再解析时，只看开头几行的人也看得到
+  if (r.dropped) console.error(`[output exceeded the Cloud Assistant limit, ${r.dropped} bytes dropped from the middle${hint}]`);
   if (r.output) console.log(r.output.trimEnd());
-  if (r.dropped) console.error(`[output exceeded the Cloud Assistant limit, ${r.dropped} bytes dropped from the middle]`);
   if (r.status !== 'Success') {
     console.error(`[${r.status}] exitCode=${r.exitCode ?? '?'} ${r.error}`.trimEnd());
     process.exitCode = r.exitCode || 1;
   }
+}
+
+function reportSaved({ result, saved }: Saved) {
+  report(result);
+  if (saved) console.log(`Saved ${saved}`);
 }
 
 // 不用 process.exit：被管道接走时它会丢掉还没写完的 stdout

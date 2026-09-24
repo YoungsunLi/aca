@@ -100,7 +100,7 @@ IIS 里挂在站点下的应用程序（IIS 管理器里"添加应用程序"建�
 | 产品 | 权限 |
 | --- | --- |
 | ECS | `ecs:DescribeInstances`、`ecs:DescribeCloudAssistantStatus`（没有它 `aca instances` 看不到云助手客户端的状态）、`ecs:RunCommand`、`ecs:DescribeInvocationResults` |
-| OSS | `oss:PutObject`、`oss:GetObject`、`oss:ListObjects`、`oss:GetBucketPolicyStatus`、`oss:DeleteObject`；bucket 开了版本控制时，`pull`、`logs`、`events`、`diff` 和 `certs replace` 删 OSS 上中转的文件要 `oss:DeleteObjectVersion` |
+| OSS | `oss:PutObject`、`oss:GetObject`、`oss:ListObjects`、`oss:GetBucketPolicyStatus`、`oss:DeleteObject`；bucket 开了版本控制时，`run -o`、`pull`、`logs`、`events`、`diff` 和 `certs replace` 删 OSS 上中转的文件要 `oss:DeleteObjectVersion` |
 | CLB | 站点配了 `clb` 时要：`slb:DescribeLoadBalancerAttribute`、`slb:DescribeLoadBalancerListeners`、`slb:DescribeHealthStatus`、`slb:SetBackendServers` |
 | 数字证书管理服务 | 取云端证书时要：`yundun-cert:ListUserCertificateOrder`、`yundun-cert:GetUserCertificateDetail`；这个服务只支持操作级授权，资源只能写 `*` |
 
@@ -138,6 +138,7 @@ aca services                                    # 列出 Windows 服务与它们
 ```sh
 aca run web1 "Get-Website | select name,state"  # 以 SYSTEM 执行任意 PowerShell
 aca run web1 --file ./check.ps1                 # 执行文件里的脚本，带 $、引号或换行时用它
+aca run web1 --file ./list.ps1 -o list.txt      # 输出存进本机文件，不受云助手的输出上限
 aca pull web1 "C:\inetpub\logs\LogFiles\W3SVC1\u_ex260919.log"  # 把服务器上的文件拉到本机当前目录
 aca logs "Default Web Site"                     # 每台服务器上这个站点最新的 20 行 IIS 日志
 aca logs "Default Web Site" --since 30m -n 500  # 最近 30 分钟里最新的 500 行
@@ -197,7 +198,8 @@ aca 以 SYSTEM 身份在服务器上执行任意 PowerShell，结束后打印输
 - **脚本里不能有 GBK 以外的字符**（如 emoji、✓、ä），aca 会拒绝发送：系统区域不是英语（美国）的服务器上，云助手客户端把脚本转成 GBK，有一个字符转不了就执行空脚本、照样报成功。
 - **Server 2012、2012 R2 上脚本等输入（缺必填参数、`Read-Host`、确认提示）会一直挂到超时**。
 - **脚本以 3010 或 3009 退出时，云助手客户端会接着重启或关掉服务器**：安装程序常以 3010 表示需要重启，别把它的退出码原样 `exit` 出去。
-- **脚本连同 aca 加的前缀 base64 后不能超过 24 KB**（纯英文约 18 KB）；输出超过云助手上限时只保留开头和结尾，丢掉中间，aca 会提示丢了多少字节，大的输出先在脚本里筛过；要看整个文件用 `aca pull`。
+- **脚本连同 aca 加的前缀 base64 后不能超过 24 KB**（纯英文约 18 KB；加 `-o` 时 aca 还要带上传用的代码和签名 URL，再少 2 到 5 KB）。
+- **输出超过云助手的上限（24 KB）时只保留开头和结尾，丢掉中间**，aca 在输出前提示丢了多少字节。要拿全的清单、查询结果加 `-o <本地文件>`：脚本的输出不打印，经 OSS 存进这个文件（脚本失败时存的是失败前的部分），和 `aca pull` 一样加密、读完就删；错误、警告和 `Write-Host` 照常打印；本机已有这个文件时 aca 报错，不覆盖。要看服务器上的整个文件用 `aca pull`。
 - **改站点文件请用 `aca deploy`**：用 `aca run` 改的东西没有备份，`aca rollback` 管不了。
 
 ### `aca pull`

@@ -100,7 +100,7 @@ Credentials are resolved by the Alibaba Cloud SDK's [default credential chain](h
 | Product | Permissions |
 | --- | --- |
 | ECS | `ecs:DescribeInstances`, `ecs:DescribeCloudAssistantStatus` (without it `aca instances` can't show the state of the Cloud Assistant client), `ecs:RunCommand`, `ecs:DescribeInvocationResults` |
-| OSS | `oss:PutObject`, `oss:GetObject`, `oss:ListObjects`, `oss:GetBucketPolicyStatus`, `oss:DeleteObject`; on a versioned bucket, `pull`, `logs`, `events`, `diff` and `certs replace` need `oss:DeleteObjectVersion` to delete the files they pass through OSS |
+| OSS | `oss:PutObject`, `oss:GetObject`, `oss:ListObjects`, `oss:GetBucketPolicyStatus`, `oss:DeleteObject`; on a versioned bucket, `run -o`, `pull`, `logs`, `events`, `diff` and `certs replace` need `oss:DeleteObjectVersion` to delete the files they pass through OSS |
 | CLB | For sites with `clb`: `slb:DescribeLoadBalancerAttribute`, `slb:DescribeLoadBalancerListeners`, `slb:DescribeHealthStatus`, `slb:SetBackendServers` |
 | Certificate Management Service | To take certificates from the cloud: `yundun-cert:ListUserCertificateOrder`, `yundun-cert:GetUserCertificateDetail`; the service authorizes per operation, so the resource can only be `*` |
 
@@ -138,6 +138,7 @@ aca services                                    # list Windows services with the
 ```sh
 aca run web1 "Get-Website | select name,state"  # run any PowerShell as SYSTEM
 aca run web1 --file ./check.ps1                 # run the script in a file, for scripts with $, quotes or line breaks
+aca run web1 --file ./list.ps1 -o list.txt      # save the output to a local file, free of the Cloud Assistant output limit
 aca pull web1 "C:\inetpub\logs\LogFiles\W3SVC1\u_ex260919.log"  # copy a file from a server to the current directory
 aca logs "Default Web Site"                     # the latest 20 lines of the site's IIS log on each server
 aca logs "Default Web Site" --since 30m -n 500  # the latest 500 lines of the last 30 minutes
@@ -197,7 +198,8 @@ aca runs any PowerShell on the server as SYSTEM and prints the output when it fi
 - **The script can't contain characters outside GBK** (e.g. emoji, ✓, ä); aca refuses to send it: on servers whose system locale is not English (United States), the Cloud Assistant client converts the script to GBK and, if a character doesn't convert, runs an empty script and still reports success.
 - **On Server 2012 and 2012 R2 a script waiting for input (a missing mandatory parameter, `Read-Host`, a confirmation prompt) hangs until the timeout**.
 - **If the script exits with 3010 or 3009, the Cloud Assistant client restarts or shuts down the server right after**: installers often return 3010 to ask for a restart, so don't pass their exit code on with `exit`.
-- **The script plus the prefix aca adds must fit in 24 KB after base64** (about 18 KB of plain English text); output beyond the Cloud Assistant limit keeps only its beginning and end, and aca reports how many bytes were dropped from the middle, so filter large output in the script; to read a whole file, use `aca pull`.
+- **The script plus the prefix aca adds must fit in 24 KB after base64** (about 18 KB of plain English text; with `-o`, aca also sends the upload code and a signed URL, which leave 2 to 5 KB less).
+- **Output beyond the Cloud Assistant limit (24 KB) keeps only its beginning and end**, and aca reports before the output how many bytes were dropped from the middle. For lists and query results you need in full, add `-o <local file>`: the script's output isn't printed but saved to that file through OSS (if the script fails, what it output before failing), encrypted and deleted after reading like `aca pull`; errors, warnings and `Write-Host` still print; if the local file already exists, aca refuses to overwrite it. To read a whole file on the server, use `aca pull`.
 - **Change site files with `aca deploy`**: whatever you change with `aca run` has no backup, and `aca rollback` can't undo it.
 
 ### `aca pull`
